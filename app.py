@@ -146,18 +146,25 @@ def index(): return render_template('index.html')
 
 @app.route('/api/staff',methods=['GET'])
 def get_staff():
-    if not supabase: return jsonify([])
-    return jsonify(supabase.table('staff').select('*').order('code').execute().data)
+    if not SUPABASE_URL:
+        return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
 
 @app.route('/api/staff',methods=['POST'])
-def add_staff(): return jsonify(supabase.table('staff').insert(request.json).execute().data)
+def add_staff():
+    data = sb_post('staff', request.json)
+    return jsonify(data)
 
 @app.route('/api/staff/<int:code>',methods=['PUT'])
-def update_staff(code): return jsonify(supabase.table('staff').update(request.json).eq('code',code).execute().data)
+def update_staff(code):
+    data = sb_patch('staff', 'code', code, request.json)
+    return jsonify(data)
 
 @app.route('/api/staff/<int:code>',methods=['DELETE'])
 def delete_staff(code):
-    supabase.table('staff').delete().eq('code',code).execute(); return jsonify({'ok':True})
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
 
 @app.route('/api/parse-excel',methods=['POST'])
 def parse_excel_api():
