@@ -1,0 +1,24 @@
+name: Restore index template
+on:
+  push:
+    paths:
+      - '.github/workflows/restore-index.yml'
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact index.html
+        run: |
+          mkdir -p templates
+          base64 -d .index.html.gz.b64 | gzip -d > templates/index.html
+          rm .index.html.gz.b64
+      - name: Commit restored file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add templates/index.html .index.html.gz.b64
+          git commit -m "Add templates/index.html from uploaded ZIP"
+          git push
