@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交通隊勤務系統</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --navy: #1a2744; --navy-light: #243260; --gold: #c8a84b; --gold-light: #e8c96d;
+  --bg: #f0f2f5; --white: #fff; --text: #1a2744; --text-muted: #6b7a99;
+  --border: #dde2ed; --red: #c0392b; --red-light: #fdf0ee;
+  --green: #1a7a4a; --green-light: #edf7f2; --sidebar-w: 220px;
+}
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+.sidebar { width: var(--sidebar-w); background: var(--navy); min-height: 100vh; display: flex; flex-direction: column; position: fixed; top:0;left:0;bottom:0; z-index:100; }
+.sidebar-logo { padding: 24px 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sidebar-logo .unit { font-size: 11px; color: var(--gold); margin-bottom: 4px; }
+.sidebar-logo .sys { font-size: 15px; font-weight: 700; color: white; }
+.nav-section { padding: 8px 20px 4px; font-size: 10px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing:1px; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:10px 20px; color:rgba(255,255,255,0.65); cursor:pointer; font-size:13.5px; border-left:3px solid transparent; transition:all 0.15s; }
+.nav-item:hover { background:rgba(255,255,255,0.07); color:white; }
+.nav-item.active { background:rgba(200,168,75,0.15); color:var(--gold-light); border-left-color:var(--gold); font-weight:600; }
+.main { margin-left: var(--sidebar-w); flex:1; display:flex; flex-direction:column; }
+.topbar { background:white; border-bottom:1px solid var(--border); padding:0 32px; height:56px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; }
+.topbar-title { font-size:16px; font-weight:700; }
+.badge { background:var(--gold); color:var(--navy); font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; }
+.content { padding:28px 32px; flex:1; }
+.page { display:none; } .page.active { display:block; }
+.card { background:white; border:1px solid var(--border); border-radius:10px; padding:24px; margin-bottom:20px; }
+.card-title { font-size:14px; font-weight:700; color:var(--navy); margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+.btn { padding:9px 20px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; border:none; transition:all 0.15s; }
+.btn-primary { background:var(--navy); color:white; } .btn-primary:hover { background:var(--navy-light); }
+.btn-gold { background:var(--gold); color:var(--navy); } .btn-gold:hover { background:var(--gold-light); }
+.btn-outline { background:white; color:var(--navy); border:1.5px solid var(--border); } .btn-outline:hover { border-color:var(--navy); }
+.btn-red { background:var(--red-light); color:var(--red); border:1px solid #f5c6c2; }
+.btn-sm { padding:5px 12px; font-size:12px; }
+.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:20px; }
+.stat-card { background:white; border:1px solid var(--border); border-radius:10px; padding:18px 20px; }
+.stat-label { font-size:12px; color:var(--text-muted); margin-bottom:6px; }
+.stat-value { font-size:28px; font-weight:800; color:var(--navy); }
+.stat-sub { font-size:11px; color:var(--text-muted); margin-top:4px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { background:var(--bg); padding:10px 14px; text-align:left; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; border-bottom:1px solid var(--border); }
+td { padding:11px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }
+tr:last-child td { border-bottom:none; } tr:hover td { background:#f8f9fc; }
+.tag { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+.tag-on { background:var(--green-light); color:var(--green); }
+.tag-off { background:#f0f2f5; color:var(--text-muted); }
+.tag-sake { background:#fff3cd; color:#856404; }
+.form-input { padding:9px 12px; border:1.5px solid var(--border); border-radius:6px; font-size:13px; outline:none; background:white; }
+.form-input:focus { border-color:var(--navy); }
+.form-label { font-size:12px; font-weight:600; color:var(--text-muted); display:block; margin-bottom:5px; }
+.alert { padding:12px 16px; border-radius:8px; font-size:13px; margin-bottom:16px; }
+.alert-info { background:#eef2ff; color:#1a56db; border:1px solid #c3d2fa; }
+.alert-warn { background:#fff8e6; color:#856404; border:1px solid #fce096; }
+.date-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+.date-cell { aspect-ratio:1; border-radius:8px; border:1.5px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; font-size:12px; background:white; transition:all 0.15s; }
+.date-cell:hover { border-color:var(--navy); }
+.date-cell.selected { background:var(--navy); color:white; border-color:var(--navy); }
+.date-cell.multi-selected { background:#e8f0fe; border-color:#1a56db; }
+.date-cell.holiday { background:#eef2ff; }
+.date-cell.has-sake { border-color:var(--gold); }
+.date-cell.has-sake-manual { border-color:var(--red); }
+.dot { width:5px; height:5px; border-radius:50%; margin-top:2px; }
+.date-num { font-size:14px; font-weight:700; }
+.date-day { font-size:10px; color:var(--text-muted); }
+.date-cell.selected .date-day, .date-cell.selected .date-num { color:rgba(255,255,255,0.9); }
+.sake-block { border:1.5px solid var(--gold); border-radius:10px; padding:16px; margin-bottom:16px; background:#fffdf5; }
+.sake-block-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.sake-item { display:flex; align-items:center; gap:12px; padding:10px 12px; background:white; border:1px solid var(--border); border-radius:8px; margin-bottom:8px; }
+.sake-time-big { font-size:18px; font-weight:800; color:var(--red); }
+.add-sake-form { background:white; border:1.5px dashed var(--border); border-radius:8px; padding:16px; margin-top:10px; display:none; }
+.add-sake-form.show { display:block; }
+.time-select { padding:8px 12px; border:1.5px solid var(--border); border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; background:white; }
+.duty-section { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.multi-bar { background:var(--navy); color:white; border-radius:8px; padding:12px 16px; display:none; align-items:center; justify-content:space-between; margin-bottom:16px; }
+.multi-bar.show { display:flex; }
+.upload-zone { border:2px dashed var(--border); border-radius:8px; padding:32px; text-align:center; cursor:pointer; transition:all 0.2s; }
+.upload-zone:hover { border-color:var(--gold); background:#fdfbf5; }
+.upload-zone.done { border-color:var(--green); background:var(--green-light); }
+.spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:white; border-radius:50%; animation:spin 0.6s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="unit">南投縣警察局交通隊</div>
+    <div class="sys">勤務自動化系統</div>
+  </div>
+  <nav style="padding:16px 0;flex:1">
+    <div class="nav-section">主要功能</div>
+    <div class="nav-item active" onclick="showPage('dashboard',this)"><span>📊</span> 總覽</div>
+    <div class="nav-item" onclick="showPage('generate',this)"><span>📄</span> 產生勤務表</div>
+    <div class="nav-section">設定</div>
+    <div class="nav-item" onclick="showPage('staff',this)"><span>👤</span> 人員管理</div>
+    <div class="nav-item" onclick="showPage('template',this)"><span>📁</span> 模板管理</div>
+  </nav>
+</div>
+
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="page-title">總覽</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="badge" id="month-badge">載入中...</span>
+      <span style="font-size:12px;color:var(--text-muted)">南投縣警察局交通隊</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- 總覽 -->
+    <div class="page active" id="page-dashboard">
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">本月天數</div><div class="stat-value" id="stat-days">－</div></div>
+        <div class="stat-card"><div class="stat-label">取締酒駕日</div><div class="stat-value" style="color:var(--gold)" id="stat-sake">－</div></div>
+        <div class="stat-card"><div class="stat-label">在職人員</div><div class="stat-value" id="stat-staff">－</div></div>
+        <div class="stat-card"><div class="stat-label">模板狀態</div><div class="stat-value" style="font-size:16px;padding-top:6px">✅ 就緒</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📅 上傳月份大表</div>
+        <div class="upload-zone" id="excel-zone" onclick="document.getElementById('excel-input').click()">
+          <div style="font-size:32px;margin-bottom:10px">📊</div>
+          <div style="font-size:14px;color:var(--text-muted)">點擊上傳 <strong style="color:var(--text)">月份勤務預定表 .xlsx</strong></div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">系統自動解析人員番號、取締酒駕時段</div>
+        </div>
+        <input type="file" id="excel-input" accept=".xlsx" style="display:none" onchange="uploadExcel(this)">
+      </div>
+
+      <div class="card" id="sake-summary" style="display:none">
+        <div class="card-title">🚔 本月取締酒駕時段</div>
+        <table>
+          <thead><tr><th>日期</th><th>時段</th><th>來源</th></tr></thead>
+          <tbody id="sake-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 產生勤務表 -->
+    <div class="page" id="page-generate">
+      <div class="alert alert-info">📌 上傳大表後選擇日期，支援單天或批次產生 Word 勤務表。</div>
+
+      <div class="card">
+        <div class="card-title">
+          📅 選擇日期
+          <label style="display:flex;align-items:center;gap:6px;margin-left:auto;font-size:13px;font-weight:400;cursor:pointer">
+            <input type="checkbox" id="multi-mode" onchange="toggleMulti()"> 多選（批次產生）
+          </label>
+        </div>
+
+        <div id="multi-bar" class="multi-bar">
+          <span id="multi-count">已選 0 天</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-gold btn-sm" onclick="generateBatch()">⬇️ 批次產生 ZIP</button>
+            <button class="btn btn-sm" style="color:white;border:1px solid rgba(255,255,255,0.3);background:transparent" onclick="clearSel()">清除</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:8px">
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">日</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">一</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">二</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">三</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">四</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">五</div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">六</div>
+        </div>
+        <div class="date-grid" id="cal"></div>
+        <div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted);margin-top:10px;flex-wrap:wrap">
+          <span>🟡 取締酒駕（大表）</span><span>🔴 取締酒駕（臨時）</span>
+          <span style="background:#eef2ff;padding:1px 6px;border-radius:3px">假日</span>
+        </div>
+      </div>
+
+      <div class="card" id="day-card" style="display:none">
+        <div id="day-card-content"></div>
+      </div>
+    </div>
+
+    <!-- 人員管理 -->
+    <div class="page" id="page-staff">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <input class="form-input" placeholder="搜尋姓名..." id="staff-search" oninput="renderStaff()" style="width:200px">
+        <button class="btn btn-primary" onclick="showAddStaff()">+ 新增人員</button>
+      </div>
+      <div class="alert alert-warn">⚠️ 修改人員後，下次產生勤務表自動套用新資料。</div>
+
+      <div class="card" id="add-staff-form" style="display:none">
+        <div class="card-title">新增人員</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+          <div><label class="form-label">代號</label><input class="form-input" id="new-code" type="number" placeholder="1" style="width:100%"></div>
+          <div><label class="form-label">姓名</label><input class="form-input" id="new-name" placeholder="姓名" style="width:100%"></div>
+          <div><label class="form-label">類別</label>
+            <select class="form-input" id="new-type" style="width:100%">
+              <option value="輪班">輪班</option>
+              <option value="固定">固定</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="addStaff()">儲存</button>
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('add-staff-form').style.display='none'">取消</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">👥 人員名冊</div>
+        <table>
+          <thead><tr><th>代號</th><th>姓名</th><th>類別</th><th>操作</th></tr></thead>
+          <tbody id="staff-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 模板管理 -->
+    <div class="page" id="page-template">
+      <div class="alert alert-info">📌 上傳 Word 另存的 .docx 模板。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card"><div class="card-title">📄 平日模板</div><div id="tmpl-平日" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日')">上傳</button><input type="file" id="file-平日" accept=".docx" style="display:none" onchange="doUploadTmpl('平日',this)"></div>
+        <div class="card"><div class="card-title">📄 假日模板</div><div id="tmpl-假日" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('假日')">上傳</button><input type="file" id="file-假日" accept=".docx" style="display:none" onchange="doUploadTmpl('假日',this)"></div>
+        <div class="card"><div class="card-title">🚔 平日取締酒駕模板</div><div id="tmpl-平日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日取酒')">上傳</button><input type="file" id="file-平日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('平日取酒',this)"></div>
+        <div class="card"><div class="card-title">🚔 假日取締酒駕模板</div><div id="tmpl-假日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('假日取酒')">上傳</button><input type="file" id="file-假日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('假日取酒',this)"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─── 狀態 ──────────────────────────────────────────────────
+let monthlyData = {};   // date -> {isHoliday, hasSake, onDuty, offDuty, sakeTimes}
+let sakeByDate  = {};   // date -> '18-22'（從大表解析）
+let manualSake  = {};   // date -> [{start,end}]（臨時新增）
+let multiMode   = false;
+let multiSel    = new Set();
+let currentYear = 115, currentMonth = 9;
+
+const DOW = ['日','一','二','三','四','五','六'];
+
+// ─── 頁面切換 ───────────────────────────────────────────────
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  document.getElementById('page-title').textContent = {dashboard:'總覽',generate:'產生勤務表',staff:'人員管理',template:'模板管理'}[id];
+  if(el) el.classList.add('active');
+  if(id==='staff') loadStaff();
+  if(id==='generate') renderCal();
+}
+
+// ─── 上傳大表 ───────────────────────────────────────────────
+async function uploadExcel(input) {
+  const file = input.files[0]; if(!file) return;
+  const zone = document.getElementById('excel-zone');
+  zone.innerHTML = '<div class="spinner"></div> 解析中...';
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const res = await fetch('/api/parse-excel', {method:'POST', body:fd});
+    const data = await res.json();
+    sakeByDate = data.sakeByDate || {};
+    zone.classList.add('done');
+    zone.innerHTML = `<div style="font-size:24px">✅</div><div style="font-size:14px;font-weight:700;margin-top:8px">${file.name}</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">取締酒駕時段 ${Object.keys(sakeByDate).length} 筆</div>`;
+    // 更新總覽
+    const tbody = document.getElementById('sake-table-body');
+    tbody.innerHTML = '';
+    Object.entries(sakeByDate).forEach(([date, time]) => {
+      const [s,e] = time.split('-');
+      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${s}:00 – ${e}:00</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
+    });
+    document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
+    document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
+    renderCal();
+  } catch(e) {
+    zone.innerHTML = '<div style="color:var(--red)">解析失敗，請確認檔案格式</div>';
+  }
+}
+
+// ─── 月曆 ───────────────────────────────────────────────────
+function renderCal() {
+  const cal = document.getElementById('cal'); cal.innerHTML = '';
+  // 取得當月第一天星期幾（民國→西元）
+  const firstDay = new Date(currentYear+1911, currentMonth-1, 1);
+  const daysInMonth = new Date(currentYear+1911, currentMonth, 0).getDate();
+  const badge = `${currentYear}年${currentMonth}月`;
+  document.getElementById('month-badge').textContent = badge;
+  document.getElementById('stat-days').textContent = daysInMonth;
+
+  // 空格
+  for(let i=0;i<firstDay.getDay();i++) cal.appendChild(document.createElement('div'));
+
+  for(let d=1;d<=daysInMonth;d++) {
+    const date = new Date(currentYear+1911, currentMonth-1, d);
+    const dow = date.getDay();
+    const isHoliday = dow===0||dow===6;
+    const dateStr = `${currentYear}年${currentMonth}月${d}日`;
+    const hasSake = !!(sakeByDate[dateStr] || (manualSake[dateStr]&&manualSake[dateStr].length));
+
+    const cell = document.createElement('div');
+    cell.className = 'date-cell';
+    cell.dataset.d = d;
+    if(isHoliday) cell.classList.add('holiday');
+    if(sakeByDate[dateStr]) cell.classList.add('has-sake');
+    if(manualSake[dateStr]&&manualSake[dateStr].length) cell.classList.add('has-sake-manual');
+    if(multiSel.has(d)) cell.classList.add('multi-selected');
+
+    let dotHtml = '';
+    if(sakeByDate[dateStr]) dotHtml = '<div class="dot" style="background:var(--gold)"></div>';
+    else if(manualSake[dateStr]&&manualSake[dateStr].length) dotHtml = '<div class="dot" style="background:var(--red)"></div>';
+
+    cell.innerHTML = `<div class="date-num">${d}</div><div class="date-day">${DOW[dow]}</div>${dotHtml}`;
+    cell.onclick = ()=>onDateClick(d, dow, isHoliday);
+    cal.appendChild(cell);
+  }
+}
+
+function onDateClick(d, dow, isHoliday) {
+  if(multiMode) {
+    const cell = document.querySelector(`.date-cell[data-d="${d}"]`);
+    if(multiSel.has(d)) { multiSel.delete(d); cell.classList.remove('multi-selected'); }
+    else { multiSel.add(d); cell.classList.add('multi-selected'); }
+    document.getElementById('multi-count').textContent = `已選 ${multiSel.size} 天`;
+  } else {
+    document.querySelectorAll('.date-cell').forEach(c=>c.classList.remove('selected'));
+    document.querySelector(`.date-cell[data-d="${d}"]`).classList.add('selected');
+    showDayCard(d, dow, isHoliday);
+  }
+}
+
+function toggleMulti() {
+  multiMode = document.getElementById('multi-mode').checked;
+  multiSel.clear();
+  document.getElementById('multi-bar').classList.toggle('show', multiMode);
+  document.getElementById('day-card').style.display = 'none';
+  renderCal();
+}
+function clearSel() { multiSel.clear(); renderCal(); document.getElementById('multi-count').textContent='已選 0 天'; }
+
+// ─── 日期詳情卡 ─────────────────────────────────────────────
+function showDayCard(d, dow, isHoliday) {
+  const dateStr = `${currentYear}年${currentMonth}月${d}日`;
+  const autoSake = sakeByDate[dateStr];
+  const manSakes = manualSake[dateStr] || [];
+  const hasSake = !!(autoSake || manSakes.length);
+  const tmpl = isHoliday ? (hasSake?'假日取締酒駕':'假日') : (hasSake?'平日取締酒駕':'平日');
+
+  // 取締酒駕區塊
+  let sakeItems = '';
+  if(autoSake) {
+    const [s,e] = autoSake.split('-');
+    sakeItems += `<div class="sake-item">
+      <span style="font-size:20px">🚔</span>
+      <div><div class="sake-time-big">${s}:00 – ${e}:00</div><div style="font-size:11px;color:var(--text-muted)">取締酒駕</div></div>
+      <span style="font-size:11px;background:var(--green-light);color:var(--green);padding:2px 7px;border-radius:4px">大表自動</span>
+    </div>`;
+  }
+  manSakes.forEach((st,i) => {
+    sakeItems += `<div class="sake-item">
+      <span style="font-size:20px">🚔</span>
+      <div><div class="sake-time-big">${st.start}:00 – ${st.end}:00</div><div style="font-size:11px;color:var(--text-muted)">取締酒駕</div></div>
+      <span style="font-size:11px;background:var(--red-light);color:var(--red);padding:2px 7px;border-radius:4px">臨時新增</span>
+      <button class="btn btn-sm btn-red" style="margin-left:auto" onclick="removeManualSake('${dateStr}',${i})">刪除</button>
+    </div>`;
+  });
+
+  // 時段下拉（00-23 開始，01-08+24 結束，支援跨夜）
+  const startOpts = Array.from({length:24},(_,i)=>`<option value="${i}">${String(i).padStart(2,'0')}:00</option>`).join('');
+  const endOpts   = Array.from({length:24},(_,i)=>`<option value="${(i+1)%24}">${String((i+1)%24).padStart(2,'0')}:00</option>`).join('');
+
+  document.getElementById('day-card-content').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="card-title" style="margin:0">
+        📋 ${dateStr}（星期${DOW[dow]}）
+        ${isHoliday?'<span class="tag" style="background:#eef2ff;color:#1a56db">假日</span>':''}
+      </div>
+      <span style="font-size:12px;color:var(--text-muted)">模板：${tmpl}</span>
+    </div>
+
+    <div class="sake-block">
+      <div class="sake-block-header">
+        <div style="font-size:13px;font-weight:700">🚔 取締酒駕設定</div>
+        <button class="btn btn-sm btn-red" onclick="toggleAddSake()">＋ 新增臨時取締</button>
+      </div>
+      <div id="sake-items">${sakeItems || '<div style="font-size:13px;color:var(--text-muted);padding:4px 0">本日無取締酒駕</div>'}</div>
+      <div class="add-sake-form" id="add-sake-form">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px">新增臨時取締酒駕時段</div>
+        <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap">
+          <div><label class="form-label">開始時間</label><select class="time-select" id="sake-s">${startOpts}</select></div>
+          <div style="padding-bottom:10px;font-weight:700;color:var(--text-muted)">→</div>
+          <div><label class="form-label">結束時間</label><select class="time-select" id="sake-e">${endOpts}</select></div>
+          <div style="display:flex;gap:8px;padding-bottom:2px">
+            <button class="btn btn-red btn-sm" onclick="confirmAddSake('${dateStr}',${d},${dow},${isHoliday})">確認</button>
+            <button class="btn btn-outline btn-sm" onclick="toggleAddSake()">取消</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">⚠️ 一天以 08:00 為起點，跨夜如 22:00→02:00 屬同一天</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="btn btn-gold" onclick="generateOne('${dateStr}',${isHoliday},${hasSake})">
+        ⬇️ 產生並下載 Word
+      </button>
+    </div>
+  `;
+
+  document.getElementById('day-card').style.display = 'block';
+  document.getElementById('day-card').scrollIntoView({behavior:'smooth'});
+}
+
+function toggleAddSake() {
+  document.getElementById('add-sake-form').classList.toggle('show');
+}
+
+function removeManualSake(dateStr, idx) {
+  manualSake[dateStr].splice(idx, 1);
+  renderCal();
+  // 重新render當天card
+  const parts = dateStr.match(/(\d+)年(\d+)月(\d+)日/);
+  if(parts) {
+    const d = parseInt(parts[3]);
+    const date = new Date(currentYear+1911, currentMonth-1, d);
+    showDayCard(d, date.getDay(), date.getDay()===0||date.getDay()===6);
+  }
+}
+
+function confirmAddSake(dateStr, d, dow, isHoliday) {
+  const s = parseInt(document.getElementById('sake-s').value);
+  const e = parseInt(document.getElementById('sake-e').value);
+  if(!manualSake[dateStr]) manualSake[dateStr] = [];
+  manualSake[dateStr].push({start:s, end:e});
+  renderCal();
+  showDayCard(d, dow, isHoliday);
+}
+
+// ─── 產生 Word ──────────────────────────────────────────────
+function buildDayData(dateStr, isHoliday) {
+  const autoSake = sakeByDate[dateStr];
+  const manSakes = manualSake[dateStr] || [];
+  const allSakes = [];
+  if(autoSake) { const [s,e]=autoSake.split('-'); allSakes.push({start:parseInt(s),end:parseInt(e)}); }
+  manSakes.forEach(st=>allSakes.push(st));
+  const hasSake = allSakes.length > 0;
+  const parts = dateStr.match(/(\d+)年(\d+)月(\d+)日/);
+  const d = parseInt(parts[3]);
+  const date = new Date(currentYear+1911, currentMonth-1, d);
+  const weekday = DOW[date.getDay()];
+
+  // 從 monthlyData 取當天資料（如果有）
+  const dayData = monthlyData[dateStr] || {};
+
+  return {
+    rocDate: dateStr,
+    weekday,
+    isHoliday: isHoliday||date.getDay()===0||date.getDay()===6,
+    hasSake,
+    sakeTimes: allSakes,
+    onDuty:  dayData.onDuty  || [],
+    offDuty: dayData.offDuty || [],
+  };
+}
+
+async function generateOne(dateStr, isHoliday, hasSake) {
+  const data = buildDayData(dateStr, isHoliday);
+  const btn = event.target;
+  btn.innerHTML = '<span class="spinner"></span> 產生中...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`勤務表_${dateStr}.docx`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  } catch(e) { alert('產生失敗：'+e.message); }
+  btn.innerHTML = '⬇️ 產生並下載 Word'; btn.disabled = false;
+}
+
+async function generateBatch() {
+  if(!multiSel.size) { alert('請先選擇日期'); return; }
+  const daysData = [];
+  multiSel.forEach(d => {
+    const dateStr = `${currentYear}年${currentMonth}月${d}日`;
+    const date = new Date(currentYear+1911, currentMonth-1, d);
+    const isHoliday = date.getDay()===0||date.getDay()===6;
+    daysData.push(buildDayData(dateStr, isHoliday));
+  });
+  daysData.sort((a,b)=>a.rocDate.localeCompare(b.rocDate));
+  const res = await fetch('/api/generate-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(daysData)});
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='勤務表批次.zip';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// ─── 人員管理 ───────────────────────────────────────────────
+async function loadStaff() {
+  const res = await fetch('/api/staff');
+  const data = await res.json();
+  const q = document.getElementById('staff-search').value.toLowerCase();
+  const tbody = document.getElementById('staff-tbody'); tbody.innerHTML = '';
+  data.filter(s=>!q||s.name.includes(q)).forEach(s=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.code}</td><td><strong>${s.name}</strong></td><td><span class="tag ${s.type==='輪班'?'tag-on':'tag-off'}">${s.type}</span></td>
+    <td style="display:flex;gap:6px">
+      <button class="btn btn-outline btn-sm" onclick="editStaff(${s.code},'${s.name}','${s.type}')">編輯</button>
+      <button class="btn btn-red btn-sm" onclick="deleteStaff(${s.code})">刪除</button>
+    </td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('stat-staff').textContent = data.filter(s=>s.type==='輪班').length;
+}
+
+function renderStaff() { loadStaff(); }
+function showAddStaff() { document.getElementById('add-staff-form').style.display='block'; }
+
+async function addStaff() {
+  const code = parseInt(document.getElementById('new-code').value);
+  const name = document.getElementById('new-name').value.trim();
+  const type = document.getElementById('new-type').value;
+  if(!code||!name) { alert('請填寫代號和姓名'); return; }
+  await fetch('/api/staff', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code,name,type})});
+  document.getElementById('add-staff-form').style.display='none';
+  loadStaff();
+}
+
+async function deleteStaff(code) {
+  if(!confirm('確定刪除？')) return;
+  await fetch(`/api/staff/${code}`, {method:'DELETE'});
+  loadStaff();
+}
+
+function editStaff(code, name, type) {
+  const newName = prompt('修改姓名：', name);
+  if(!newName) return;
+  fetch(`/api/staff/${code}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:newName, type})}).then(()=>loadStaff());
+}
+
+// ─── 模板上傳 ───────────────────────────────────────────────
+function uploadTmpl(type) { document.getElementById(`file-${type}`).click(); }
+async function doUploadTmpl(type, input) {
+  const file = input.files[0]; if(!file) return;
+  const fd = new FormData(); fd.append('file',file); fd.append('type',type);
+  const res = await fetch('/api/upload-template', {method:'POST', body:fd});
+  if(res.ok) { document.getElementById(`tmpl-${type}`).innerHTML = `<span style="color:var(--green)">✅ ${file.name}</span>`; }
+}
+
+// 初始化
+renderCal();
+</script>
+</body>
+</html>
