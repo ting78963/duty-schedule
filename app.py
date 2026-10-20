@@ -83,8 +83,13 @@ def set_cell(cell, text, size=None, color='000000'):
     cell.paragraphs[0].add_run(text)
 
 def set_red_border(row):
-    for cell in row.cells:
+    """只框住時段勤務格 (第 1~29 欄)，不碰時間欄與右側人員/休假欄。"""
+    seen = set()
+    for cell in row.cells[1:30]:
         tc = cell._tc
+        if id(tc) in seen:
+            continue  # Word 合併儲存格可能重複出現在 cells 中
+        seen.add(id(tc))
         tcPr = tc.find(f'{{{ns}}}tcPr')
         if tcPr is None:
             tcPr = etree.SubElement(tc, f'{{{ns}}}tcPr')
