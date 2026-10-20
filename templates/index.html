@@ -356,7 +356,7 @@ function showDayCard(d, dow, isHoliday) {
   // 取締酒駕區塊
   let sakeItems = '';
   if(autoSake) {
-    const [s,e] = autoSake.split('-');
+    const [s,e] = typeof autoSake === 'string' ? autoSake.split('-') : [autoSake.start, autoSake.end];
     sakeItems += `<div class="sake-item">
       <span style="font-size:20px">🚔</span>
       <div><div class="sake-time-big">${s}:00 – ${e}:00</div><div style="font-size:11px;color:var(--text-muted)">取締酒駕</div></div>
