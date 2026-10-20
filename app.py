@@ -270,6 +270,12 @@ def generate_word(data):
         raise ValueError('缺少當日人員資料，請先上傳 Excel 並確認日期')
     on_duty  = data['onDuty']
     off_duty = data['offDuty']
+    people = on_duty + off_duty
+    if not any(isinstance(p.get('ban'), int) and 1 <= p['ban'] <= 20 for p in people):
+        raise ValueError('當日沒有有效的 1～20 番人員，請檢查 Excel 番號欄位')
+    bans = [p['ban'] for p in people if isinstance(p.get('ban'), int) and 1 <= p['ban'] <= 20]
+    if len(bans) != len(set(bans)):
+        raise ValueError('當日有重複番號，停止產生 Word')
     roc_date = data['rocDate']
     weekday  = data['weekday']
     is_holiday = data['isHoliday']
