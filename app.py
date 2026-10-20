@@ -46,8 +46,8 @@ def get_tmpl(is_holiday, has_sake):
     if has_sake:                return os.path.join(ASSETS, 'tmpl_平日取酒.docx')
     return os.path.join(ASSETS, 'tmpl_平日.docx')
 
-def get_cols(is_holiday):
-    if is_holiday:
+def get_cols(is_holiday, has_sake=False):
+    if is_holiday and not has_sake:
         return 28, 29, 30, 31, 32
     return 30, 31, 32, 33, 34
 
@@ -168,7 +168,7 @@ def parse_excel(file_bytes):
 
         for col, name in name_cols.items():
             # 番號在姓名左欄，狀態在右欄
-            ban_val = ws_ext.cell(row=row, column=col-1).value
+            ban_val = ws_ext.cell(row=row, column=col).value
             status_val = ws_ext.cell(row=row, column=col+1).value
 
             ban = None
@@ -204,6 +204,9 @@ def parse_excel(file_bytes):
             'on_duty': sorted(on_duty, key=lambda x: x['ban'] or 99),
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
+
+    if not monthly_data:
+        raise ValueError('Excel 沒有解析到任何日期，請確認外勤工作表與日期格式')
 
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
@@ -263,6 +266,8 @@ def sync_staff(staff_names):
     return new_names  # 回傳新人員名單讓前端確認
 
 def generate_word(data):
+    if not isinstance(data, dict) or not data.get('onDuty') and not data.get('offDuty'):
+        raise ValueError('缺少當日人員資料，請先上傳 Excel 並確認日期')
     on_duty  = data['onDuty']
     off_duty = data['offDuty']
     roc_date = data['rocDate']
@@ -275,7 +280,7 @@ def generate_word(data):
     if not os.path.exists(tmpl_path):
         raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
 
-    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday, has_sake)
 
     lx, bx, gg = [], [], []
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
@@ -322,7 +327,8 @@ def generate_word(data):
 
     for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
         for j, s in enumerate(people):
-            if j >= len(rows): break
+            if j >= len(rows):
+                raise ValueError('休假人員超過模板可容納的欄位，停止產生 Word')
             set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
             set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
 
@@ -451,6 +457,8 @@ def generate_api():
 @app.route('/api/generate-batch', methods=['POST'])
 def generate_batch():
     days_data = request.json
+    if not isinstance(days_data, list) or not days_data:
+        return jsonify({'error':'請先選擇日期'}), 400
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
@@ -458,8 +466,8 @@ def generate_batch():
                 buf = generate_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
-            except:
-                pass
+            except Exception as e:
+                return jsonify({'error': f"{d.get('rocDate','未知日期')} 產生失敗：{e}"}), 422
     zip_buf.seek(0)
     return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
                     mimetype='application/zip')
