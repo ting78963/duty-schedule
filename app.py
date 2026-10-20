@@ -132,6 +132,22 @@ def excel_date(value, epoch):
         return None
 
 
+# 節日輪休：集中管理，不再散落在各段程式中。
+# 未列出的註記仍需人工確認，避免將勤務誤判為休假。
+NATIONAL_HOLIDAY_LABELS = {
+    '元旦', '開國紀念日', '和平紀念日', '二二八', '228',
+    '兒童節', '清明節', '勞動節', '端午節', '中秋節',
+    '教師節', '國慶日', '雙十節', '臺灣光復節', '台灣光復節',
+    '光復節', '行憲紀念日', '除夕', '春節', '農曆春節',
+    '小年夜', '春節補假', '國定假日', '國定假日補假',
+}
+
+def is_national_holiday_leave(status):
+    label = str(status or '').strip().replace(' ', '')
+    return label in NATIONAL_HOLIDAY_LABELS or (
+        label.endswith('補假') and label[:-2] in NATIONAL_HOLIDAY_LABELS
+    )
+
 def parse_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
@@ -196,16 +212,17 @@ def parse_excel(file_bytes):
                     status = raw  # 保留完整節日或勤務註記
 
             person = {'name': name, 'ban': ban, 'status': status}
-            off_statuses = ['輪','優','休','補','公','中秋節','教師節']
-            if status and status not in off_statuses and status not in ['酒','宿']:
+            off_statuses = ['輪','優','休','補','公']
+            holiday_leave = is_national_holiday_leave(status)
+            if status and status not in off_statuses and not holiday_leave and status not in ['酒','宿']:
                 raise ValueError(f'{date_str} {name} 有尚未定義的註記「{status}」，請確認是出勤或休假，避免產生錯誤勤務表')
-            if status in off_statuses:
+            if status in off_statuses or holiday_leave:
                 off_duty.append(person)
             else:
                 on_duty.append(person)
 
         # 國定假日輪休標記代表當日使用假日模板，不只看星期六、日。
-        if any(p['status'] in ['中秋節','教師節'] for p in off_duty):
+        if any(is_national_holiday_leave(p['status']) for p in off_duty):
             is_holiday = True
 
         monthly_data[date_str] = {
@@ -306,7 +323,7 @@ def generate_word(data):
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補','中秋節','教師節']: bx.append(s)
+        elif st in ['優','休','補'] or is_national_holiday_leave(st): bx.append(s)
         elif st == '公': gg.append(s)
 
     doc = Document(tmpl_path)
