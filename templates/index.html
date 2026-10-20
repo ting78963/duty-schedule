@@ -301,7 +301,9 @@ function renderCal() {
   for(let d=1;d<=daysInMonth;d++) {
     const date = new Date(currentYear+1911, currentMonth-1, d);
     const dow = date.getDay();
-    const isHoliday = dow===0||dow===6;
+    const dateStrForHoliday = `${currentYear}年${currentMonth}月${d}日`;
+    const savedDay = monthlyData[dateStrForHoliday];
+    const isHoliday = dow===0||dow===6||!!(savedDay && (savedDay.is_holiday || savedDay.isHoliday));
     const dateStr = `${currentYear}年${currentMonth}月${d}日`;
     const hasSake = !!(sakeByDate[dateStr] || (manualSake[dateStr]&&manualSake[dateStr].length));
 
@@ -459,10 +461,13 @@ function buildDayData(dateStr, isHoliday) {
   const dayData = monthlyData[dateStr];
   if(!dayData || !Array.isArray(dayData.on_duty || dayData.onDuty) || !Array.isArray(dayData.off_duty || dayData.offDuty)) throw new Error('沒有 '+dateStr+' 的完整人員資料，請先上傳該月份 Excel');
 
+  const allPeople = [...(dayData.onDuty || dayData.on_duty), ...(dayData.offDuty || dayData.off_duty)];
+  if(allPeople.some(p => p.status === '酒') && !allSakes.length) throw new Error(dateStr+' 有取締酒駕人員，但缺少另一頁的勤務時段，不能產生 Word');
+
   return {
     rocDate: dateStr,
     weekday,
-    isHoliday: isHoliday||date.getDay()===0||date.getDay()===6,
+    isHoliday: !!(isHoliday || dayData.is_holiday || dayData.isHoliday || date.getDay()===0 || date.getDay()===6),
     hasSake,
     sakeTimes: allSakes,
     onDuty:  dayData.onDuty  || dayData.on_duty,
