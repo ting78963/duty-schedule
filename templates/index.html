@@ -260,21 +260,28 @@ async function uploadExcel(input) {
   try {
     const res = await fetch('/api/parse-excel', {method:'POST', body:fd});
     const data = await res.json();
+    if(!res.ok || data.error) throw new Error(data.error || 'Excel 解析失敗');
+    monthlyData = data.monthlyData || {};
+    if(!Object.keys(monthlyData).length) throw new Error('沒有解析到每日人員資料');
     sakeByDate = data.sakeByDate || {};
+    const dates = Object.keys(monthlyData);
+    const first = dates[0].match(/(\d+)年(\d+)月/);
+    if(first){ currentYear = Number(first[1]); currentMonth = Number(first[2]); }
     zone.classList.add('done');
     zone.innerHTML = `<div style="font-size:24px">✅</div><div style="font-size:14px;font-weight:700;margin-top:8px">${file.name}</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">取締酒駕時段 ${Object.keys(sakeByDate).length} 筆</div>`;
     // 更新總覽
     const tbody = document.getElementById('sake-table-body');
     tbody.innerHTML = '';
     Object.entries(sakeByDate).forEach(([date, time]) => {
-      const [s,e] = time.split('-');
+      const s = typeof time === 'string' ? time.split('-')[0] : time.start;
+      const e = typeof time === 'string' ? time.split('-')[1] : time.end;
       tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${s}:00 – ${e}:00</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
     });
     document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
     document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
     renderCal();
   } catch(e) {
-    zone.innerHTML = '<div style="color:var(--red)">解析失敗，請確認檔案格式</div>';
+    zone.innerHTML = '<div style="color:var(--red)">解析失敗：'+String(e.message || e)+'</div>';
   }
 }
 
@@ -440,7 +447,7 @@ function buildDayData(dateStr, isHoliday) {
   const autoSake = sakeByDate[dateStr];
   const manSakes = manualSake[dateStr] || [];
   const allSakes = [];
-  if(autoSake) { const [s,e]=autoSake.split('-'); allSakes.push({start:parseInt(s),end:parseInt(e)}); }
+  if(autoSake) { if(typeof autoSake === 'string'){ const [s,e]=autoSake.split('-'); allSakes.push({start:parseInt(s),end:parseInt(e)}); } else { allSakes.push(autoSake); } }
   manSakes.forEach(st=>allSakes.push(st));
   const hasSake = allSakes.length > 0;
   const parts = dateStr.match(/(\d+)年(\d+)月(\d+)日/);
@@ -449,7 +456,8 @@ function buildDayData(dateStr, isHoliday) {
   const weekday = DOW[date.getDay()];
 
   // 從 monthlyData 取當天資料（如果有）
-  const dayData = monthlyData[dateStr] || {};
+  const dayData = monthlyData[dateStr];
+  if(!dayData || !Array.isArray(dayData.on_duty || dayData.onDuty) || !Array.isArray(dayData.off_duty || dayData.offDuty)) throw new Error('沒有 '+dateStr+' 的完整人員資料，請先上傳該月份 Excel');
 
   return {
     rocDate: dateStr,
@@ -457,18 +465,20 @@ function buildDayData(dateStr, isHoliday) {
     isHoliday: isHoliday||date.getDay()===0||date.getDay()===6,
     hasSake,
     sakeTimes: allSakes,
-    onDuty:  dayData.onDuty  || [],
-    offDuty: dayData.offDuty || [],
+    onDuty:  dayData.onDuty  || dayData.on_duty,
+    offDuty: dayData.offDuty || dayData.off_duty,
   };
 }
 
 async function generateOne(dateStr, isHoliday, hasSake) {
-  const data = buildDayData(dateStr, isHoliday);
-  const btn = event.target;
+  let data;
+  try { data = buildDayData(dateStr, isHoliday); } catch(e) { alert(e.message); return; }
+  const btn = document.activeElement;
   btn.innerHTML = '<span class="spinner"></span> 產生中...';
   btn.disabled = true;
   try {
     const res = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    if(!res.ok){ const err=await res.json().catch(()=>({})); throw new Error(err.error || 'Word 產生失敗'); }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href=url; a.download=`勤務表_${dateStr}.docx`;
@@ -480,14 +490,15 @@ async function generateOne(dateStr, isHoliday, hasSake) {
 async function generateBatch() {
   if(!multiSel.size) { alert('請先選擇日期'); return; }
   const daysData = [];
-  multiSel.forEach(d => {
+  try { multiSel.forEach(d => {
     const dateStr = `${currentYear}年${currentMonth}月${d}日`;
     const date = new Date(currentYear+1911, currentMonth-1, d);
     const isHoliday = date.getDay()===0||date.getDay()===6;
     daysData.push(buildDayData(dateStr, isHoliday));
-  });
+  }); } catch(e) { alert(e.message); return; }
   daysData.sort((a,b)=>a.rocDate.localeCompare(b.rocDate));
   const res = await fetch('/api/generate-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(daysData)});
+  if(!res.ok){ const err=await res.json().catch(()=>({})); alert(err.error || '批次產生失敗'); return; }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download='勤務表批次.zip';
