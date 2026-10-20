@@ -334,6 +334,23 @@ def generate_word(data):
     doc = Document(tmpl_path)
     t = doc.tables[0]
 
+    # 取締酒駕範本 22-23 的預填車號每日不同，僅清空文字；
+    # 不刪除格子、不改動框線及其餘勤務內容。
+    if has_sake:
+        for vehicle_row in t.rows:
+            if vehicle_row.cells[0].text.strip() != '22-23':
+                continue
+            seen_vehicle_cells = set()
+            for vehicle_col in range(4, 9):
+                cell = vehicle_row.cells[vehicle_col]
+                tc_id = id(cell._tc)
+                if tc_id in seen_vehicle_cells:
+                    continue
+                seen_vehicle_cells.add(tc_id)
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.text = ''
+
     ban_to_row = {}
     for r_idx in range(4, len(t.rows)):
         if CODE_COL >= len(t.rows[r_idx].cells): continue
