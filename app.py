@@ -196,6 +196,10 @@ def parse_excel(file_bytes):
             else:
                 on_duty.append(person)
 
+        # 國定假日輪休標記代表當日使用假日模板，不只看星期六、日。
+        if any(p['status'] in ['中秋節','教師節'] for p in off_duty):
+            is_holiday = True
+
         monthly_data[date_str] = {
             'date_str': date_str,
             'roc_date': date_str,
@@ -283,6 +287,10 @@ def generate_word(data):
     is_holiday = data['isHoliday']
     has_sake   = data.get('hasSake', False)
     sake_times = data.get('sakeTimes', [])
+    if any(p.get('status') == '酒' for p in people) and not sake_times:
+        raise ValueError('外勤表有取締酒駕人員，但缺少另一頁的酒駕時段，不能產生未框線的勤務表')
+    if sake_times and not has_sake:
+        raise ValueError('有取締酒駕時段但未啟用酒駕模板，請檢查資料合併')
 
     tmpl_path = get_tmpl(is_holiday, has_sake)
     if not os.path.exists(tmpl_path):
