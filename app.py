@@ -331,6 +331,14 @@ def generate_word(data):
         elif st in ['優','休','補'] or is_national_holiday_leave(st): bx.append(s)
         elif st == '公': gg.append(s)
 
+    # 非 18-22 的酒駕時段需要搬移原始合併儲存格及藍字。
+    # 尚未通過完整版面驗證時，必須拒絕輸出，避免錯誤勤務表。
+    if has_sake and any(
+        (int(st['start']), int(st['end'])) != (18, 22)
+        for st in sake_times
+    ):
+        raise ValueError('目前僅原始 18-22 酒駕模板可安全輸出；其他時段的原始藍字與紅框搬移尚未驗證')
+
     doc = Document(tmpl_path)
     t = doc.tables[0]
 
@@ -341,7 +349,7 @@ def generate_word(data):
             if vehicle_row.cells[0].text.strip() != '22-23':
                 continue
             seen_vehicle_cells = set()
-            for vehicle_col in range(4, 9):
+            for vehicle_col in (7, 8):
                 cell = vehicle_row.cells[vehicle_col]
                 tc_id = id(cell._tc)
                 if tc_id in seen_vehicle_cells:
@@ -429,7 +437,8 @@ def generate_word(data):
                 if len(rows) != 2:
                     raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
                 for row_idx in rows:
-                    raise ValueError('酒駕勤務模板仍需完成原始紅框及藍字的整組垂直搬移；為避免破壞固定人數格線，暫停非原始時段的輸出')
+                    # 原始 18-22 模板已具備正確的紅框與藍字，不再重畫。
+                    pass
 
     buf = io.BytesIO()
     doc.save(buf)
