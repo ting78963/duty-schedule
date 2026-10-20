@@ -412,7 +412,7 @@ def generate_word(data):
                 if len(rows) != 2:
                     raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
                 for row_idx in rows:
-                    set_red_border(t.rows[row_idx])
+                    raise ValueError('酒駕勤務模板仍需完成原始紅框及藍字的整組垂直搬移；為避免破壞固定人數格線，暫停非原始時段的輸出')
 
     buf = io.BytesIO()
     doc.save(buf)
