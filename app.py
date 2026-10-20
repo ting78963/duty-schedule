@@ -349,7 +349,7 @@ def generate_word(data):
             if vehicle_row.cells[0].text.strip() != '22-23':
                 continue
             seen_vehicle_cells = set()
-            for vehicle_col in (7, 8):
+            for vehicle_col in range(4, 9):
                 cell = vehicle_row.cells[vehicle_col]
                 tc_id = id(cell._tc)
                 if tc_id in seen_vehicle_cells:
