@@ -188,8 +188,8 @@ def parse_excel(file_bytes):
                     status = raw[:2]  # 常訓等備考
 
             person = {'name': name, 'ban': ban, 'status': status}
-            off_statuses = ['輪','優','休','補','公']
-            if status and status not in off_statuses and status != '酒':
+            off_statuses = ['輪','優','休','補','公','中秋節','教師節']
+            if status and status not in off_statuses and status not in ['酒','宿']:
                 raise ValueError(f'{date_str} {name} 有尚未定義的註記「{status}」，請確認是出勤或休假，避免產生錯誤勤務表')
             if status in off_statuses:
                 off_duty.append(person)
@@ -294,7 +294,7 @@ def generate_word(data):
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補']: bx.append(s)
+        elif st in ['優','休','補','中秋節','教師節']: bx.append(s)
         elif st == '公': gg.append(s)
 
     doc = Document(tmpl_path)
