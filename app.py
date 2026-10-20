@@ -3,6 +3,7 @@ from docx import Document
 from lxml import etree
 import openpyxl, json, io, os, re, copy, zipfile, requests as req
 from datetime import datetime
+from openpyxl.utils.datetime import from_excel
 
 app = Flask(__name__)
 
@@ -120,6 +121,17 @@ def parse_sake_time(cell_value):
     if m: return {'start': int(m.group(1)), 'end': int(m.group(2))}
     return None
 
+def excel_date(value, epoch):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return from_excel(value, epoch=epoch)
+    try:
+        return datetime.strptime(str(value).strip()[:10], '%Y-%m-%d')
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
@@ -148,13 +160,9 @@ def parse_excel(file_bytes):
     for row in range(5, ws_ext.max_row+1):
         date_val = ws_ext.cell(row=row, column=1).value
         if not date_val: continue
-        if isinstance(date_val, datetime):
-            date_obj = date_val
-        else:
-            try:
-                date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-            except:
-                continue
+        date_obj = excel_date(date_val, wb.epoch)
+        if date_obj is None:
+            continue
 
         roc_year = date_obj.year - 1911
         month = date_obj.month
@@ -185,7 +193,7 @@ def parse_excel(file_bytes):
                         status = s
                         break
                 if not status:
-                    status = raw[:2]  # 常訓等備考
+                    status = raw  # 保留完整節日或勤務註記
 
             person = {'name': name, 'ban': ban, 'status': status}
             off_statuses = ['輪','優','休','補','公','中秋節','教師節']
@@ -223,13 +231,9 @@ def parse_excel(file_bytes):
             if date_val and ao_val and '取締' in str(ao_val):
                 sake_time = parse_sake_time(ao_val)
                 if sake_time:
-                    if isinstance(date_val, datetime):
-                        date_obj = date_val
-                    else:
-                        try:
-                            date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-                        except:
-                            continue
+                    date_obj = excel_date(date_val, wb.epoch)
+                    if date_obj is None:
+                        continue
                     roc_year = date_obj.year - 1911
                     date_str = f'{roc_year}年{date_obj.month}月{date_obj.day}日'
                     sake_by_date[date_str] = sake_time
