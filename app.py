@@ -358,7 +358,148 @@ def generate_word(data):
             if not row.cells:
                 continue
             cell_txt = row.cells[0].text.strip()
-            m = re.match(r'^(\\d{1,2})[－\\-–](\\d{1,2})$', cell_txt)
+            m = re.match(r'^(\d{1,2})[-－–](\d{1,2}), cell_txt)
+            if m:
+                time_to_rows.setdefault(int(m.group(1)) % 24, []).append(r_idx)
+
+        for st in sake_times:
+            start_hour = int(st['start'])
+            end_hour = int(st['end'])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24):
+                raise ValueError(f'取締酒駕時間不合法：{start_hour}-{end_hour}')
+            duration = (end_hour - start_hour) % 24
+            if duration == 0:
+                raise ValueError('取締酒駕開始與結束時間相同，無法判斷時段')
+            for offset in range(duration):
+                hour = (start_hour + offset) % 24
+                rows = time_to_rows.get(hour, [])
+                if len(rows) != 2:
+                    raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
+                for row_idx in rows:
+                    set_red_border(t.rows[row_idx])
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── API ──────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/staff', methods=['GET'])
+def get_staff():
+    if not SUPABASE_URL: return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
+
+@app.route('/api/staff', methods=['POST'])
+def add_staff():
+    return jsonify(sb_post('staff', request.json))
+
+@app.route('/api/staff/<int:code>', methods=['PUT'])
+def update_staff(code):
+    return jsonify(sb_patch('staff', 'code', code, request.json))
+
+@app.route('/api/staff/<int:code>', methods=['DELETE'])
+def delete_staff(code):
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
+
+@app.route('/api/parse-excel', methods=['POST'])
+def parse_excel_api():
+    f = request.files.get('file')
+    if not f: return jsonify({'error': '未上傳檔案'}), 400
+    try:
+        result = parse_excel(f.read())
+        # 自動存到 Supabase
+        saved = save_to_supabase(result['monthlyData'])
+        result['savedDays'] = saved
+        # 回傳新人員名單（前端確認後再同步）
+        new_staff = sync_staff(result['staffFromExcel'])
+        result['newStaff'] = new_staff
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/duty/<date_str>', methods=['GET'])
+def get_duty(date_str):
+    """從 Supabase 取特定日期的勤務資料"""
+    if not SUPABASE_URL: return jsonify(None)
+    data = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if data and len(data) > 0:
+        d = data[0]
+        return jsonify({
+            'rocDate': d['roc_date'],
+            'weekday': d['weekday'],
+            'isHoliday': d['is_holiday'],
+            'hasSake': d['has_sake'],
+            'sakeTimes': d['sake_times'],
+            'onDuty': d['on_duty'],
+            'offDuty': d['off_duty'],
+        })
+    return jsonify(None)
+
+@app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    if not isinstance(days_data, list) or not days_data:
+        return jsonify({'error':'請先選擇日期'}), 400
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except Exception as e:
+                return jsonify({'error': f"{d.get('rocDate','未知日期')} 產生失敗：{e}"}), 422
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or not tmpl_type:
+        return jsonify({'error': '缺少參數'}), 400
+    name_map = {
+        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
+        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
+    }
+    fname = name_map.get(tmpl_type)
+    if not fname: return jsonify({'error': '無效類型'}), 400
+    os.makedirs(ASSETS, exist_ok=True)
+    f.save(os.path.join(ASSETS, fname))
+    return jsonify({'ok': True})
+
+if __name__ == '__main__':
+    app.run(debug=True), cell_txt)
             if m:
                 time_to_rows.setdefault(int(m.group(1)) % 24, []).append(r_idx)
 
