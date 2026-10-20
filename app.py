@@ -3,6 +3,7 @@ from docx import Document
 from lxml import etree
 import openpyxl, json, io, os, re, copy, zipfile, requests as req
 from datetime import datetime
+from openpyxl.utils.datetime import from_excel
 
 app = Flask(__name__)
 
@@ -46,8 +47,8 @@ def get_tmpl(is_holiday, has_sake):
     if has_sake:                return os.path.join(ASSETS, 'tmpl_平日取酒.docx')
     return os.path.join(ASSETS, 'tmpl_平日.docx')
 
-def get_cols(is_holiday):
-    if is_holiday:
+def get_cols(is_holiday, has_sake=False):
+    if is_holiday and not has_sake:
         return 28, 29, 30, 31, 32
     return 30, 31, 32, 33, 34
 
@@ -82,8 +83,13 @@ def set_cell(cell, text, size=None, color='000000'):
     cell.paragraphs[0].add_run(text)
 
 def set_red_border(row):
-    for cell in row.cells:
+    """只框住時段勤務格 (第 1~29 欄)，不碰時間欄與右側人員/休假欄。"""
+    seen = set()
+    for cell in row.cells[1:30]:
         tc = cell._tc
+        if id(tc) in seen:
+            continue  # Word 合併儲存格可能重複出現在 cells 中
+        seen.add(id(tc))
         tcPr = tc.find(f'{{{ns}}}tcPr')
         if tcPr is None:
             tcPr = etree.SubElement(tc, f'{{{ns}}}tcPr')
@@ -120,6 +126,33 @@ def parse_sake_time(cell_value):
     if m: return {'start': int(m.group(1)), 'end': int(m.group(2))}
     return None
 
+def excel_date(value, epoch):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return from_excel(value, epoch=epoch)
+    try:
+        return datetime.strptime(str(value).strip()[:10], '%Y-%m-%d')
+    except (ValueError, TypeError):
+        return None
+
+
+# 節日輪休：集中管理，不再散落在各段程式中。
+# 未列出的註記仍需人工確認，避免將勤務誤判為休假。
+NATIONAL_HOLIDAY_LABELS = {
+    '元旦', '開國紀念日', '和平紀念日', '二二八', '228',
+    '兒童節', '清明節', '勞動節', '端午節', '中秋節',
+    '教師節', '國慶日', '雙十節', '臺灣光復節', '台灣光復節',
+    '光復節', '行憲紀念日', '除夕', '春節', '農曆春節',
+    '小年夜', '春節補假', '國定假日', '國定假日補假',
+}
+
+def is_national_holiday_leave(status):
+    label = str(status or '').strip().replace(' ', '')
+    return label in NATIONAL_HOLIDAY_LABELS or (
+        label.endswith('補假') and label[:-2] in NATIONAL_HOLIDAY_LABELS
+    )
+
 def parse_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
@@ -138,23 +171,19 @@ def parse_excel(file_bytes):
 
     # 列2：人員姓名
     name_cols = {}
-    for c in range(1, ws_ext.max_column+1):
+    for c in range(3, ws_ext.max_column+1, 2):
         v = ws_ext.cell(row=2, column=c).value
         if v and isinstance(v, str) and len(v) >= 2 and v not in ['當日休息人數','固定番人數','日期','星期']:
             name_cols[c] = v
             staff_from_excel[v] = True
 
     # 列3以後：每天
-    for row in range(3, ws_ext.max_row+1):
+    for row in range(5, ws_ext.max_row+1):
         date_val = ws_ext.cell(row=row, column=1).value
         if not date_val: continue
-        if isinstance(date_val, datetime):
-            date_obj = date_val
-        else:
-            try:
-                date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-            except:
-                continue
+        date_obj = excel_date(date_val, wb.epoch)
+        if date_obj is None:
+            continue
 
         roc_year = date_obj.year - 1911
         month = date_obj.month
@@ -167,8 +196,8 @@ def parse_excel(file_bytes):
         off_duty = []
 
         for col, name in name_cols.items():
-            # 番號在姓名左欄，狀態在右欄
-            ban_val = ws_ext.cell(row=row, column=col-1).value
+            # 番號在姓名正下方同欄，狀態在右欄
+            ban_val = ws_ext.cell(row=row, column=col).value
             status_val = ws_ext.cell(row=row, column=col+1).value
 
             ban = None
@@ -185,25 +214,35 @@ def parse_excel(file_bytes):
                         status = s
                         break
                 if not status:
-                    status = raw[:2]  # 常訓等備考
+                    status = raw  # 保留完整節日或勤務註記
 
             person = {'name': name, 'ban': ban, 'status': status}
             off_statuses = ['輪','優','休','補','公']
-            if any(s == status for s in off_statuses):
+            holiday_leave = is_national_holiday_leave(status)
+            if status and status not in off_statuses and not holiday_leave and status not in ['酒','宿','常訓']:
+                raise ValueError(f'{date_str} {name} 有尚未定義的註記「{status}」，請確認是出勤或休假，避免產生錯誤勤務表')
+            if status in off_statuses or holiday_leave:
                 off_duty.append(person)
             else:
                 on_duty.append(person)
+
+        # 國定假日輪休標記代表當日使用假日模板，不只看星期六、日。
+        if any(is_national_holiday_leave(p['status']) for p in off_duty):
+            is_holiday = True
 
         monthly_data[date_str] = {
             'date_str': date_str,
             'roc_date': date_str,
             'weekday': weekday,
             'is_holiday': is_holiday,
-            'has_sake': False,
+            'has_sake': any(p['status'] == '酒' for p in on_duty),
             'sake_times': [],
             'on_duty': sorted(on_duty, key=lambda x: x['ban'] or 99),
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
+
+    if not monthly_data:
+        raise ValueError('Excel 沒有解析到任何日期，請確認外勤工作表與日期格式')
 
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
@@ -214,13 +253,9 @@ def parse_excel(file_bytes):
             if date_val and ao_val and '取締' in str(ao_val):
                 sake_time = parse_sake_time(ao_val)
                 if sake_time:
-                    if isinstance(date_val, datetime):
-                        date_obj = date_val
-                    else:
-                        try:
-                            date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-                        except:
-                            continue
+                    date_obj = excel_date(date_val, wb.epoch)
+                    if date_obj is None:
+                        continue
                     roc_year = date_obj.year - 1911
                     date_str = f'{roc_year}年{date_obj.month}月{date_obj.day}日'
                     sake_by_date[date_str] = sake_time
@@ -263,29 +298,66 @@ def sync_staff(staff_names):
     return new_names  # 回傳新人員名單讓前端確認
 
 def generate_word(data):
+    if not isinstance(data, dict) or not data.get('onDuty') and not data.get('offDuty'):
+        raise ValueError('缺少當日人員資料，請先上傳 Excel 並確認日期')
     on_duty  = data['onDuty']
     off_duty = data['offDuty']
+    people = on_duty + off_duty
+    if not any(isinstance(p.get('ban'), int) and 1 <= p['ban'] <= 20 for p in people):
+        raise ValueError('當日沒有有效的 1～20 番人員，請檢查 Excel 番號欄位')
+    bans = [p['ban'] for p in people if isinstance(p.get('ban'), int) and 1 <= p['ban'] <= 20]
+    if len(bans) != len(set(bans)):
+        raise ValueError('當日有重複番號，停止產生 Word')
     roc_date = data['rocDate']
     weekday  = data['weekday']
     is_holiday = data['isHoliday']
     has_sake   = data.get('hasSake', False)
     sake_times = data.get('sakeTimes', [])
+    if any(p.get('status') == '酒' for p in people) and not sake_times:
+        raise ValueError('外勤表有取締酒駕人員，但缺少另一頁的酒駕時段，不能產生未框線的勤務表')
+    if sake_times and not has_sake:
+        raise ValueError('有取締酒駕時段但未啟用酒駕模板，請檢查資料合併')
 
     tmpl_path = get_tmpl(is_holiday, has_sake)
     if not os.path.exists(tmpl_path):
         raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
 
-    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday, has_sake)
 
     lx, bx, gg = [], [], []
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補']: bx.append(s)
+        elif st in ['優','休','補'] or is_national_holiday_leave(st): bx.append(s)
         elif st == '公': gg.append(s)
+
+    # 非 18-22 的酒駕時段需要搬移原始合併儲存格及藍字。
+    # 尚未通過完整版面驗證時，必須拒絕輸出，避免錯誤勤務表。
+    if has_sake and any(
+        (int(st['start']), int(st['end'])) != (18, 22)
+        for st in sake_times
+    ):
+        raise ValueError('目前僅原始 18-22 酒駕模板可安全輸出；其他時段的原始藍字與紅框搬移尚未驗證')
 
     doc = Document(tmpl_path)
     t = doc.tables[0]
+
+    # 取締酒駕範本 22-23 的預填車號每日不同，僅清空文字；
+    # 不刪除格子、不改動框線及其餘勤務內容。
+    if has_sake:
+        for vehicle_row in t.rows:
+            if vehicle_row.cells[0].text.strip() != '22-23':
+                continue
+            seen_vehicle_cells = set()
+            for vehicle_col in range(4, 9):
+                cell = vehicle_row.cells[vehicle_col]
+                tc_id = id(cell._tc)
+                if tc_id in seen_vehicle_cells:
+                    continue
+                seen_vehicle_cells.add(tc_id)
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.text = ''
 
     ban_to_row = {}
     for r_idx in range(4, len(t.rows)):
@@ -322,7 +394,8 @@ def generate_word(data):
 
     for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
         for j, s in enumerate(people):
-            if j >= len(rows): break
+            if j >= len(rows):
+                raise ValueError('休假人員超過模板可容納的欄位，停止產生 Word')
             set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
             set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
 
@@ -337,30 +410,35 @@ def generate_word(data):
                         run.text = f'星期{weekday}'
             break
 
-    if sake_times and has_sake:
-        time_to_row = {}
-        for r_idx in range(len(t.rows)):
-            row = t.rows[r_idx]
-            if not row.cells: continue
+    if has_sake:
+        if not sake_times:
+            raise ValueError('當日有取締酒駕勤務，但沒有有效時段')
+        # Word 的每個小時由兩個表格列組成；不能只框到其中一列。
+        time_to_rows = {}
+        for r_idx, row in enumerate(t.rows):
+            if not row.cells:
+                continue
             cell_txt = row.cells[0].text.strip()
-            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
+            m = re.match(r'^(\d{1,2})[-－–](\d{1,2}), cell_txt)
             if m:
-                h = int(m.group(1))
-                time_to_row[h] = r_idx
+                time_to_rows.setdefault(int(m.group(1)) % 24, []).append(r_idx)
 
         for st in sake_times:
-            s_h = int(st['start'])
-            e_h = int(st['end'])
-            hours = []
-            h = s_h
-            while True:
-                hours.append(h % 24)
-                h += 1
-                if h % 24 == e_h % 24: break
-                if len(hours) > 16: break
-            for h in hours:
-                if h in time_to_row:
-                    set_red_border(t.rows[time_to_row[h]])
+            start_hour = int(st['start'])
+            end_hour = int(st['end'])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24):
+                raise ValueError(f'取締酒駕時間不合法：{start_hour}-{end_hour}')
+            duration = (end_hour - start_hour) % 24
+            if duration == 0:
+                raise ValueError('取締酒駕開始與結束時間相同，無法判斷時段')
+            for offset in range(duration):
+                hour = (start_hour + offset) % 24
+                rows = time_to_rows.get(hour, [])
+                if len(rows) != 2:
+                    raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
+                for row_idx in rows:
+                    # 原始 18-22 模板已具備正確的紅框與藍字，不再重畫。
+                    pass
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -451,6 +529,8 @@ def generate_api():
 @app.route('/api/generate-batch', methods=['POST'])
 def generate_batch():
     days_data = request.json
+    if not isinstance(days_data, list) or not days_data:
+        return jsonify({'error':'請先選擇日期'}), 400
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
@@ -458,8 +538,149 @@ def generate_batch():
                 buf = generate_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
-            except:
-                pass
+            except Exception as e:
+                return jsonify({'error': f"{d.get('rocDate','未知日期')} 產生失敗：{e}"}), 422
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or not tmpl_type:
+        return jsonify({'error': '缺少參數'}), 400
+    name_map = {
+        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
+        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
+    }
+    fname = name_map.get(tmpl_type)
+    if not fname: return jsonify({'error': '無效類型'}), 400
+    os.makedirs(ASSETS, exist_ok=True)
+    f.save(os.path.join(ASSETS, fname))
+    return jsonify({'ok': True})
+
+if __name__ == '__main__':
+    app.run(debug=True), cell_txt)
+            if m:
+                time_to_rows.setdefault(int(m.group(1)) % 24, []).append(r_idx)
+
+        for st in sake_times:
+            start_hour = int(st['start'])
+            end_hour = int(st['end'])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24):
+                raise ValueError(f'取締酒駕時間不合法：{start_hour}-{end_hour}')
+            duration = (end_hour - start_hour) % 24
+            if duration == 0:
+                raise ValueError('取締酒駕開始與結束時間相同，無法判斷時段')
+            for offset in range(duration):
+                hour = (start_hour + offset) % 24
+                rows = time_to_rows.get(hour, [])
+                if len(rows) != 2:
+                    raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
+                for row_idx in rows:
+                    set_red_border(t.rows[row_idx])
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── API ──────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/staff', methods=['GET'])
+def get_staff():
+    if not SUPABASE_URL: return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
+
+@app.route('/api/staff', methods=['POST'])
+def add_staff():
+    return jsonify(sb_post('staff', request.json))
+
+@app.route('/api/staff/<int:code>', methods=['PUT'])
+def update_staff(code):
+    return jsonify(sb_patch('staff', 'code', code, request.json))
+
+@app.route('/api/staff/<int:code>', methods=['DELETE'])
+def delete_staff(code):
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
+
+@app.route('/api/parse-excel', methods=['POST'])
+def parse_excel_api():
+    f = request.files.get('file')
+    if not f: return jsonify({'error': '未上傳檔案'}), 400
+    try:
+        result = parse_excel(f.read())
+        # 自動存到 Supabase
+        saved = save_to_supabase(result['monthlyData'])
+        result['savedDays'] = saved
+        # 回傳新人員名單（前端確認後再同步）
+        new_staff = sync_staff(result['staffFromExcel'])
+        result['newStaff'] = new_staff
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/duty/<date_str>', methods=['GET'])
+def get_duty(date_str):
+    """從 Supabase 取特定日期的勤務資料"""
+    if not SUPABASE_URL: return jsonify(None)
+    data = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if data and len(data) > 0:
+        d = data[0]
+        return jsonify({
+            'rocDate': d['roc_date'],
+            'weekday': d['weekday'],
+            'isHoliday': d['is_holiday'],
+            'hasSake': d['has_sake'],
+            'sakeTimes': d['sake_times'],
+            'onDuty': d['on_duty'],
+            'offDuty': d['off_duty'],
+        })
+    return jsonify(None)
+
+@app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    if not isinstance(days_data, list) or not days_data:
+        return jsonify({'error':'請先選擇日期'}), 400
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except Exception as e:
+                return jsonify({'error': f"{d.get('rocDate','未知日期')} 產生失敗：{e}"}), 422
     zip_buf.seek(0)
     return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
                     mimetype='application/zip')
