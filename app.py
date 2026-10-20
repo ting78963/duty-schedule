@@ -219,7 +219,7 @@ def parse_excel(file_bytes):
             person = {'name': name, 'ban': ban, 'status': status}
             off_statuses = ['輪','優','休','補','公']
             holiday_leave = is_national_holiday_leave(status)
-            if status and status not in off_statuses and not holiday_leave and status not in ['酒','宿']:
+            if status and status not in off_statuses and not holiday_leave and status not in ['酒','宿','常訓']:
                 raise ValueError(f'{date_str} {name} 有尚未定義的註記「{status}」，請確認是出勤或休假，避免產生錯誤勤務表')
             if status in off_statuses or holiday_leave:
                 off_duty.append(person)
