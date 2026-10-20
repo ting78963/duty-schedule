@@ -349,30 +349,34 @@ def generate_word(data):
                         run.text = f'星期{weekday}'
             break
 
-    if sake_times and has_sake:
-        time_to_row = {}
-        for r_idx in range(len(t.rows)):
-            row = t.rows[r_idx]
-            if not row.cells: continue
+    if has_sake:
+        if not sake_times:
+            raise ValueError('當日有取締酒駕勤務，但沒有有效時段')
+        # Word 的每個小時由兩個表格列組成；不能只框到其中一列。
+        time_to_rows = {}
+        for r_idx, row in enumerate(t.rows):
+            if not row.cells:
+                continue
             cell_txt = row.cells[0].text.strip()
-            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
+            m = re.match(r'^(\\d{1,2})[－\\-–](\\d{1,2})$', cell_txt)
             if m:
-                h = int(m.group(1))
-                time_to_row[h] = r_idx
+                time_to_rows.setdefault(int(m.group(1)) % 24, []).append(r_idx)
 
         for st in sake_times:
-            s_h = int(st['start'])
-            e_h = int(st['end'])
-            hours = []
-            h = s_h
-            while True:
-                hours.append(h % 24)
-                h += 1
-                if h % 24 == e_h % 24: break
-                if len(hours) > 16: break
-            for h in hours:
-                if h in time_to_row:
-                    set_red_border(t.rows[time_to_row[h]])
+            start_hour = int(st['start'])
+            end_hour = int(st['end'])
+            if not (0 <= start_hour <= 23 and 0 <= end_hour <= 24):
+                raise ValueError(f'取締酒駕時間不合法：{start_hour}-{end_hour}')
+            duration = (end_hour - start_hour) % 24
+            if duration == 0:
+                raise ValueError('取締酒駕開始與結束時間相同，無法判斷時段')
+            for offset in range(duration):
+                hour = (start_hour + offset) % 24
+                rows = time_to_rows.get(hour, [])
+                if len(rows) != 2:
+                    raise ValueError(f'Word 模板缺少完整的 {hour:02d}:00 時段')
+                for row_idx in rows:
+                    set_red_border(t.rows[row_idx])
 
     buf = io.BytesIO()
     doc.save(buf)
