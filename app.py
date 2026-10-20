@@ -138,14 +138,14 @@ def parse_excel(file_bytes):
 
     # 列2：人員姓名
     name_cols = {}
-    for c in range(1, ws_ext.max_column+1):
+    for c in range(3, ws_ext.max_column+1, 2):
         v = ws_ext.cell(row=2, column=c).value
         if v and isinstance(v, str) and len(v) >= 2 and v not in ['當日休息人數','固定番人數','日期','星期']:
             name_cols[c] = v
             staff_from_excel[v] = True
 
     # 列3以後：每天
-    for row in range(3, ws_ext.max_row+1):
+    for row in range(5, ws_ext.max_row+1):
         date_val = ws_ext.cell(row=row, column=1).value
         if not date_val: continue
         if isinstance(date_val, datetime):
@@ -167,7 +167,7 @@ def parse_excel(file_bytes):
         off_duty = []
 
         for col, name in name_cols.items():
-            # 番號在姓名左欄，狀態在右欄
+            # 番號在姓名正下方同欄，狀態在右欄
             ban_val = ws_ext.cell(row=row, column=col).value
             status_val = ws_ext.cell(row=row, column=col+1).value
 
@@ -189,7 +189,9 @@ def parse_excel(file_bytes):
 
             person = {'name': name, 'ban': ban, 'status': status}
             off_statuses = ['輪','優','休','補','公']
-            if any(s == status for s in off_statuses):
+            if status and status not in off_statuses and status != '酒':
+                raise ValueError(f'{date_str} {name} 有尚未定義的註記「{status}」，請確認是出勤或休假，避免產生錯誤勤務表')
+            if status in off_statuses:
                 off_duty.append(person)
             else:
                 on_duty.append(person)
@@ -199,7 +201,7 @@ def parse_excel(file_bytes):
             'roc_date': date_str,
             'weekday': weekday,
             'is_holiday': is_holiday,
-            'has_sake': False,
+            'has_sake': any(p['status'] == '酒' for p in on_duty),
             'sake_times': [],
             'on_duty': sorted(on_duty, key=lambda x: x['ban'] or 99),
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
