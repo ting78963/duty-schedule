@@ -52,46 +52,61 @@ def get_cols(is_holiday):
     return 30, 31, 32, 33, 34
 
 def set_cell(cell, text, size=None, color='000000'):
+    """Replace text while preserving the approved Word template's layout and run formatting."""
     text = str(text) if text else ''
-    for para in cell.paragraphs:
-        runs = para.runs
-        if runs:
-            runs[0].text = text
-            for rr in runs[1:]: rr.text = ''
-            rpr = runs[0]._r.find(f'{{{ns}}}rPr')
-            if rpr is None:
-                rpr = etree.SubElement(runs[0]._r, f'{{{ns}}}rPr')
-                runs[0]._r.insert(0, rpr)
-            fonts = rpr.find(f'{{{ns}}}rFonts')
-            if fonts is None: fonts = etree.SubElement(rpr, f'{{{ns}}}rFonts')
-            for attr in ['ascii','hAnsi','eastAsia','cs']:
-                fonts.set(f'{{{ns}}}{attr}', '標楷體')
-            col_el = rpr.find(f'{{{ns}}}color')
-            if col_el is None: col_el = etree.SubElement(rpr, f'{{{ns}}}color')
-            col_el.set(f'{{{ns}}}val', color)
-            if size:
-                for tag in ['sz','szCs']:
-                    el = rpr.find(f'{{{ns}}}{tag}')
-                    if el is None: el = etree.SubElement(rpr, f'{{{ns}}}{tag}')
-                    el.set(f'{{{ns}}}val', str(size))
-            else:
-                for tag in ['sz','szCs']:
-                    el = rpr.find(f'{{{ns}}}{tag}')
-                    if el is not None: rpr.remove(el)
-            return
-    # Blank template cells often have no runs: explicitly style the newly added run.
-    run = cell.paragraphs[0].add_run(text)
-    run.font.name = '標楷體'
+    para = cell.paragraphs[0]
+    runs = para.runs
+    if runs:
+        run = runs[0]
+        run.text = text
+        for extra in runs[1:]:
+            extra.text = ''
+    else:
+        # Blank roster cells have no runs. Copy a formatted run from an
+        # adjacent populated cell in the same table column when available.
+        from copy import deepcopy
+        reference = None
+        parent_row = cell._tc.getparent()
+        table = parent_row.getparent()
+        cells = list(parent_row)
+        col_idx = next((i for i, tc in enumerate(cells) if tc is cell._tc), None)
+        if col_idx is not None:
+            for other_row in table:
+                if other_row.tag != f'{{{ns}}}tr':
+                    continue
+                other_cells = [c for c in other_row if c.tag == f'{{{ns}}}tc']
+                if col_idx >= len(other_cells):
+                    continue
+                other_tc = other_cells[col_idx]
+                for rpr in other_tc.iter(f'{{{ns}}}rPr'):
+                    if rpr.find(f'{{{ns}}}rFonts') is not None:
+                        reference = deepcopy(rpr)
+                        break
+                if reference is not None:
+                    break
+        run = para.add_run(text)
+        if reference is not None:
+            current = run._r.rPr
+            if current is not None:
+                run._r.remove(current)
+            run._r.insert(0, reference)
     rpr = run._r.get_or_add_rPr()
     fonts = rpr.find(f'{{{ns}}}rFonts')
-    if fonts is None: fonts = etree.SubElement(rpr, f'{{{ns}}}rFonts')
-    for attr in ['ascii','hAnsi','eastAsia','cs']:
+    if fonts is None:
+        fonts = etree.SubElement(rpr, f'{{{ns}}}rFonts')
+    for attr in ('ascii', 'hAnsi', 'eastAsia', 'cs'):
         fonts.set(f'{{{ns}}}{attr}', '標楷體')
-    if size:
-        for tag in ['sz','szCs']:
+    if size is not None:
+        for tag in ('sz', 'szCs'):
             el = rpr.find(f'{{{ns}}}{tag}')
-            if el is None: el = etree.SubElement(rpr, f'{{{ns}}}{tag}')
+            if el is None:
+                el = etree.SubElement(rpr, f'{{{ns}}}{tag}')
             el.set(f'{{{ns}}}val', str(size))
+    if color != '000000':
+        el = rpr.find(f'{{{ns}}}color')
+        if el is None:
+            el = etree.SubElement(rpr, f'{{{ns}}}color')
+        el.set(f'{{{ns}}}val', color)
 
 def set_red_border(row):
     for cell in row.cells:
