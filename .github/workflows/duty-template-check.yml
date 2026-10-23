@@ -173,7 +173,7 @@ jobs:
           url=os.environ['SUPABASE_URL'].rstrip('/')
           key=os.environ['SUPABASE_SERVICE_ROLE_KEY']
           assert url and key, 'Missing Supabase Actions secrets'
-          name='qa-only/'+uuid.uuid4().hex+'.docx'
+          name='qa_only_'+uuid.uuid4().hex+'.docx'
           payload=open('assets/tmpl_平日.docx','rb').read()
           base=f'{url}/storage/v1/object/duty-templates/{name}'
           headers={'apikey':key,'Authorization':'Bearer '+key}
@@ -193,7 +193,7 @@ jobs:
               doc=Document(io.BytesIO(r.content))
               assert doc.tables, 'Stored template missing Word table'
               with patch.object(app,'SUPABASE_URL',url),patch.object(app,'SUPABASE_KEY',key):
-                  stored=app.template_bytes('qa-only/'+name.split('/')[-1])
+                  stored=app.template_bytes(name)
               assert stored==payload, 'App loader did not use private Storage'
               print('APP TEMPLATE LOADER READBACK PASSED')
           finally:
