@@ -52,7 +52,7 @@ def template_bytes(tmpl_path):
     name = os.path.basename(tmpl_path)
     if SUPABASE_URL and SUPABASE_KEY:
         url = f"{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{name}"
-        response = req.get(url, params={'v': uuid.uuid4().hex}, headers={'apikey': SUPABASE_KEY,
+        response = req.get(url + '?v=' + uuid.uuid4().hex, headers={'apikey': SUPABASE_KEY,
                             'Authorization': f'Bearer {SUPABASE_KEY}', 'Cache-Control': 'no-cache'}, timeout=20)
         if response.status_code == 200:
             validate_template_bytes(response.content)
