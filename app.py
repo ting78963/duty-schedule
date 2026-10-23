@@ -67,6 +67,12 @@ def validate_template_bytes(payload):
         raise ValueError('範本不得超過5MB')
     if not zipfile.is_zipfile(io.BytesIO(payload)):
         raise ValueError('檔案不是有效的Word docx')
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        members = archive.infolist()
+        if len(members) > 3000 or sum(item.file_size for item in members) > 60 * 1024 * 1024:
+            raise ValueError('Word檔案內部容量異常，拒絕上傳')
+        if 'word/document.xml' not in archive.namelist():
+            raise ValueError('Word檔案缺少必要內容')
     doc = Document(io.BytesIO(payload))
     if not doc.tables:
         raise ValueError('Word範本沒有勤務表格')
