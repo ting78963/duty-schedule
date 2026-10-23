@@ -366,9 +366,10 @@ def generate_word(data):
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
             set_cell(t.rows[r_idx].cells[ONAME_COL], '')
 
-    for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
+    for section_name, people, rows in [('輪休', lx, lx_rows), ('休補假', bx, bx_rows), ('公假', gg, gg_rows)]:
+        if len(people) > len(rows):
+            raise ValueError(f'{section_name}名單有{len(people)}人，但Word只有{len(rows)}個欄位，已停止產生以免漏人')
         for j, s in enumerate(people):
-            if j >= len(rows): break
             set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
             set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
 
