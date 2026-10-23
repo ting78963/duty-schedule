@@ -32,7 +32,7 @@ def blank_duty_document(doc):
             val = ''.join(node.text or '' for node in nodes).strip()
             is_combined = (width == 37 and row <= 39 and start not in (4, 5, 6, 7)
                            and COMBINED.fullmatch(val) is not None)
-            if not val or (VEHICLE.fullmatch(val) and not is_combined):
+            if not val:
                 continue
             if STAFF.fullmatch(val) or is_combined or DUTY_VEHICLE.fullmatch(val):
                 changes.append(nodes)
