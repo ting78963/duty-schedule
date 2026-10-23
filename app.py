@@ -445,7 +445,15 @@ def generate_word(data):
             set_cell(t.rows[r_idx].cells[ONAME_COL], '')
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
 
-    lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
+    # Roster slots are defined by the two approved fixed headings.
+    # Do not let legacy heading positions in old templates reduce capacity.
+    wheel_headings = [i for i in range(leave_anchor)
+                      if '輪' in t.rows[i].cells[ONAME_COL].text
+                      and '休' in t.rows[i].cells[ONAME_COL].text]
+    if not wheel_headings:
+        raise ValueError('Word範本缺少輪休標題')
+    lx_rows = list(range(wheel_headings[0] + 1, leave_anchor))
+
     # Leave entries are bounded by the fixed public-leave heading at code 29.
     # Do not reuse legacy scattered positions from older Word templates.
     bx_rows = []
@@ -456,7 +464,7 @@ def generate_word(data):
         if '休(補)假' in txt:
             continue
         bx_rows.append(r_idx)
-    gg_rows = find_section_rows(t, ONAME_COL, '公假')
+    gg_rows = [i for i in range(public_anchor + 1, len(t.rows))\n               if not any(x in t.rows[i].cells[ONAME_COL].text\n                          for x in ('附記', '巡邏', '調適'))]
 
     for rows in [lx_rows, bx_rows, gg_rows]:
         for r_idx in rows:
