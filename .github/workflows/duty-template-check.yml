@@ -193,7 +193,7 @@ jobs:
               doc=Document(io.BytesIO(r.content))
               assert doc.tables, 'Stored template missing Word table'
               with patch.object(app,'SUPABASE_URL',url),patch.object(app,'SUPABASE_KEY',key):
-                  stored=app.template_bytes(app.get_tmpl(False,False).replace('tmpl_平日.docx',name))
+                  stored=app.template_bytes('qa-only/'+name.split('/')[-1])
               assert stored==payload, 'App loader did not use private Storage'
               print('APP TEMPLATE LOADER READBACK PASSED')
           finally:
