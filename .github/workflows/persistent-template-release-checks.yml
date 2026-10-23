@@ -33,3 +33,84 @@ jobs:
           assert "validate_template_bytes" in app
           print("Release static checks passed")
           PY
+
+  live-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install application dependencies
+        run: pip install -r requirements.txt
+      - name: End-to-end upload, private readback and generated Word
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TEMPLATE_UPLOAD_TOKEN: ${{ secrets.TEMPLATE_UPLOAD_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, io, uuid, tempfile
+          from pathlib import Path
+          from unittest.mock import patch
+          from docx import Document
+          import app
+
+          url=os.environ['SUPABASE_URL'].rstrip('/')
+          key=os.environ['SUPABASE_KEY']
+          token=os.environ['TEMPLATE_UPLOAD_TOKEN']
+          assert url and key and token, 'Missing required Actions secrets'
+
+          # Build a disposable valid DOCX with the expected 35-column weekday layout.
+          doc=Document()
+          table=doc.add_table(rows=7, cols=35)
+          table.cell(0,0).text='一線巡邏'
+          table.cell(4,30).text='19'
+          table.cell(4,34).text='休(補)假'
+          table.cell(5,30).text='29'
+          table.cell(5,34).text='公假'
+          table.cell(6,34).text='輪   休'
+          buf=io.BytesIO()
+          doc.save(buf)
+          original=buf.getvalue()
+          # Upload edited wording so generation can prove the custom text survives.
+          edited=Document(io.BytesIO(original))
+          edited.tables[0].cell(0,0).text='測試巡邏文字'
+          buf=io.BytesIO()
+          edited.save(buf)
+          payload=buf.getvalue()
+
+          name='qa_only_'+uuid.uuid4().hex+'.docx'
+          obj=f'{url}/storage/v1/object/duty-templates/{name}'
+          headers={'apikey':key,'Authorization':'Bearer '+key}
+          original_names=app.TEMPLATE_NAMES.copy()
+          uploaded=False
+          try:
+              with patch.object(app,'SUPABASE_URL',url), patch.object(app,'SUPABASE_KEY',key), patch.dict(os.environ,{'TEMPLATE_UPLOAD_TOKEN':token}):
+                  app.TEMPLATE_NAMES['平日']=name
+                  client=app.app.test_client()
+                  denied=client.post('/api/upload-template',data={'type':'平日','file':(io.BytesIO(payload),'qa.docx')},content_type='multipart/form-data')
+                  assert denied.status_code==403, f'Unauthenticated upload should be rejected, got {denied.status_code}'
+                  response=client.post('/api/upload-template',data={'type':'平日','file':(io.BytesIO(payload),'qa.docx')},content_type='multipart/form-data',headers={'X-Template-Upload-Token':token})
+                  assert response.status_code==200 and response.get_json().get('persistent') is True, f'Upload endpoint failed: {response.status_code} {response.get_json()}'
+                  uploaded=True
+                  saved=app.template_bytes(name)
+                  assert saved==payload, 'Private Storage readback does not match uploaded DOCX'
+                  with tempfile.TemporaryDirectory() as tmp:
+                      local=Path(tmp)/name
+                      local.write_bytes(payload)
+                      with patch.object(app,'get_tmpl',return_value=str(local)):
+                          output=app.generate_word({'onDuty':[],'offDuty':[],'rocDate':'115年11月1日','weekday':'日','isHoliday':False,'hasSake':False})
+                      generated=Document(output)
+                      all_text='\\n'.join(cell.text for t in generated.tables for row in t.rows for cell in row.cells)
+                      assert '測試巡邏文字' in all_text, 'Generated Word lost the edited patrol wording'
+                  print('LIVE UPLOAD AUTH, PRIVATE STORAGE READBACK, AND WORD GENERATION PASSED')
+          finally:
+              app.TEMPLATE_NAMES.clear()
+              app.TEMPLATE_NAMES.update(original_names)
+              if uploaded:
+                  import requests
+                  cleanup=requests.delete(obj,headers=headers,timeout=30)
+                  assert cleanup.status_code in (200,204), f'QA cleanup failed: HTTP {cleanup.status_code}'
+                  print('QA test object deleted')
+          PY
