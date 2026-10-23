@@ -233,7 +233,8 @@ def parse_excel(file_bytes):
                     continue
                 raw = str(ws_all.cell(row, col).value or '').strip()
                 person = {'name': name, 'ban': code,
-                          'status': '留職停薪' if name == '林筠臻' else raw}
+                          'status': '留職停薪' if name == '林筠臻' else (
+                              '輪' if name in ('李金孔', '林新慶', '李智偉', '董安民') and '輪' in raw else raw)}
                 # 內勤「輪」不是請假；只列明確的休假狀態。
                 is_leave = raw in ('優', '休', '補', '公') or (name in ('李金孔', '林新慶', '李智偉', '董安民') and '輪' in raw)
                 (day['off_duty'] if is_leave else day['on_duty']).append(person)
