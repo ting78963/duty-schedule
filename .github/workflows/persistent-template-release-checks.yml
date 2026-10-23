@@ -47,7 +47,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TEMPLATE_UPLOAD_TOKEN: ${{ secrets.TEMPLATE_UPLOAD_TOKEN }}
         run: |
           python - <<'PY'
           import os, io, uuid, tempfile
@@ -58,8 +57,8 @@ jobs:
 
           url=os.environ['SUPABASE_URL'].rstrip('/')
           key=os.environ['SUPABASE_KEY']
-          token=os.environ['TEMPLATE_UPLOAD_TOKEN']
-          assert url and key and token, 'Missing required Actions secrets'
+          token='qa-temporary-'+uuid.uuid4().hex
+          assert url and key, 'Missing required Actions secrets'
 
           # Build a disposable valid DOCX with the expected 35-column weekday layout.
           doc=Document()
