@@ -339,13 +339,13 @@ def generate_word(data):
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '', size=24)
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '')
 
     for s in off_duty:
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '', size=24)
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '')
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
     bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
