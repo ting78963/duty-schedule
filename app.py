@@ -55,8 +55,9 @@ def template_bytes(tmpl_path):
         response = req.get(url, headers={'apikey': SUPABASE_KEY,
                             'Authorization': f'Bearer {SUPABASE_KEY}'}, timeout=20)
         if response.status_code == 200:
+            validate_template_bytes(response.content)
             return response.content
-        if response.status_code not in (400, 404):
+        if response.status_code != 404:
             raise RuntimeError(f'無法讀取已上傳的範本：HTTP {response.status_code}')
     with open(tmpl_path, 'rb') as f:
         return f.read()
