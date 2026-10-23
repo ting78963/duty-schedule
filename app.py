@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_file, render_template
 from docx import Document
 from lxml import etree
-import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac
+import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac, uuid
 from datetime import datetime
 
 app = Flask(__name__)
@@ -52,8 +52,8 @@ def template_bytes(tmpl_path):
     name = os.path.basename(tmpl_path)
     if SUPABASE_URL and SUPABASE_KEY:
         url = f"{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{name}"
-        response = req.get(url, headers={'apikey': SUPABASE_KEY,
-                            'Authorization': f'Bearer {SUPABASE_KEY}'}, timeout=20)
+        response = req.get(url, params={'v': uuid.uuid4().hex}, headers={'apikey': SUPABASE_KEY,
+                            'Authorization': f'Bearer {SUPABASE_KEY}', 'Cache-Control': 'no-cache'}, timeout=20)
         if response.status_code == 200:
             validate_template_bytes(response.content)
             return response.content
