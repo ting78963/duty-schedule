@@ -138,7 +138,7 @@ def parse_excel(file_bytes):
 
     # 列2：人員姓名
     name_cols = {}
-    for c in range(1, ws_ext.max_column+1):
+    for c in range(3, 42, 2):
         v = ws_ext.cell(row=2, column=c).value
         if v and isinstance(v, str) and len(v) >= 2 and v not in ['當日休息人數','固定番人數','日期','星期']:
             name_cols[c] = v
