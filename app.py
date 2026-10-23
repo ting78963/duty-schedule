@@ -389,12 +389,12 @@ def generate_word(data):
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
         set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
-    # The leave heading belongs on the row of OFFICIAL ROSTER CODE 19,
+    # The leave heading belongs on the row of OFFICIAL ROSTER CODE 16,
     # never on the physical nineteenth Word table row.
     from copy import deepcopy
-    leave_anchor = ban_to_row.get(19)
+    leave_anchor = ban_to_row.get(16)
     if leave_anchor is None:
-        raise ValueError('Word範本找不到人員代號19，無法定位休(補)假')
+        raise ValueError('Word範本找不到人員代號16，無法定位休(補)假')
     heading_rows = [i for i in range(len(t.rows))
                     if '休(補)假' in t.rows[i].cells[ONAME_COL].text]
     if not heading_rows:
@@ -403,7 +403,7 @@ def generate_word(data):
         source = t.rows[heading_rows[0]].cells[ONAME_COL].paragraphs[0]
         target = t.rows[leave_anchor].cells[ONAME_COL].paragraphs[0]
         if target.text.strip():
-            raise ValueError('代號19同排已有文字，無法安全移動休(補)假標題')
+            raise ValueError('代號16同排已有文字，無法安全移動休(補)假標題')
         if source._p.pPr is not None:
             if target._p.pPr is not None:
                 target._p.remove(target._p.pPr)
