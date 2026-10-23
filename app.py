@@ -389,6 +389,23 @@ def generate_word(data):
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
         set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
+    # The approved layout anchors 休(補)假 to the row whose roster code is 15,
+    # not to the person's name (which can change each day).  Remove only a
+    # duplicate heading below that anchor; never remove the canonical heading.
+    leave_anchor = ban_to_row.get(15)
+    if leave_anchor is None:
+        raise ValueError('Word範本缺少代號15，無法定位休(補)假標題')
+    canonical = t.rows[leave_anchor].cells[ONAME_COL]
+    if '休(補)假' not in canonical.text:
+        raise ValueError('代號15同排缺少休(補)假標題，請確認Word範本')
+    for r_idx in range(leave_anchor + 1, len(t.rows)):
+        txt = t.rows[r_idx].cells[ONAME_COL].text.strip()
+        if txt and any(x in txt for x in ('公假', '附記', '巡邏', '調適')):
+            break
+        if '休(補)假' in txt:
+            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
+
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
     bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
     gg_rows = find_section_rows(t, ONAME_COL, '公假')
