@@ -220,7 +220,7 @@ def parse_excel(file_bytes):
         cols = [(c, str(ws_all.cell(2, c).value).strip())
                 for c in range(49, 75) if ws_all.cell(2, c).value]
         for row in range(3, ws_all.max_row + 1):
-            date_val = ws_all.cell(row, 1).value
+            date_val = ws_all.cell(row, 47).value
             if not isinstance(date_val, datetime):
                 continue
             key = f'{date_val.year - 1911}年{date_val.month}月{date_val.day}日'
