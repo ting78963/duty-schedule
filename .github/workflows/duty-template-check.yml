@@ -120,9 +120,8 @@ jobs:
                           if '一線巡邏' in run.text:
                               run.text = run.text.replace('一線巡邏','測試巡邏文字')
                               changed = True
-          if not changed:
-              print('Template has no 一線巡邏 run; skipping literal rename check')
-          else:
+          assert changed, 'Template does not contain editable 一線巡邏 text; cannot verify replacement'
+          if changed:
               with tempfile.TemporaryDirectory() as d:
                   modified = os.path.join(d, 'tmpl_平日.docx')
                   doc.save(modified)
