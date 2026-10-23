@@ -205,6 +205,43 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
+    # ── 全隊大表：內勤每日狀態（代號只採用已存在的正式對照） ──
+    if '全隊大表' in wb.sheetnames:
+        ws_all = wb['全隊大表']
+        # 不用欄位位置猜測內勤代號；沒有正式代號的人員不寫入對照表。
+        staff_records = sb_get('staff', params={'order': 'code'}) if SUPABASE_URL else []
+        official_codes = {str(p['name']).strip(): int(p['code'])
+                          for p in staff_records
+                          if p.get('name') and str(p.get('code', '')).isdigit()
+                          and int(p['code']) > 20}
+        internal_cols = [(col, str(ws_all.cell(2, col).value).strip())
+                         for col in range(49, min(ws_all.max_column, 74) + 1)
+                         if ws_all.cell(2, col).value
+                         and str(ws_all.cell(2, col).value).strip() not in ('日期', '星期')]
+        for row in range(3, ws_all.max_row + 1):
+            date_value = ws_all.cell(row, 1).value
+            if not isinstance(date_value, datetime):
+                continue
+            date_key = f'{date_value.year-1911}年{date_value.month}月{date_value.day}日'
+            if date_key not in monthly_data:
+                continue
+            day_data = monthly_data[date_key]
+            for col, name in internal_cols:
+                code = official_codes.get(name)
+                if code is None:
+                    continue
+                raw_status = str(ws_all.cell(row, col).value or '').strip()
+                status = next((v for v in ('輪', '優', '休', '補', '公')
+                               if raw_status == v), raw_status)
+                person = {'name': name, 'ban': code, 'status': status}
+                # 內勤「輪」不列入請假；只在實際請假狀態才放入請假欄。
+                if status in ('優', '休', '補', '公'):
+                    day_data['off_duty'].append(person)
+                else:
+                    day_data['on_duty'].append(person)
+            day_data['on_duty'].sort(key=lambda x: x['ban'] or 999)
+            day_data['off_duty'].sort(key=lambda x: x['ban'] or 999)
+
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
