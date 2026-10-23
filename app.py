@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_file, render_template
 from docx import Document
 from lxml import etree
-import openpyxl, json, io, os, re, copy, zipfile, requests as req
+import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac
 from datetime import datetime
 
 app = Flask(__name__)
@@ -509,7 +509,9 @@ def generate_word(data):
         if '休(補)假' in txt:
             continue
         bx_rows.append(r_idx)
-    gg_rows = [i for i in range(public_anchor + 1, len(t.rows))\n               if not any(x in t.rows[i].cells[ONAME_COL].text\n                          for x in ('附記', '巡邏', '調適'))]
+    gg_rows = [i for i in range(public_anchor + 1, len(t.rows))
+               if not any(x in t.rows[i].cells[ONAME_COL].text
+                          for x in ('附記', '巡邏', '調適'))]
 
     for rows in [lx_rows, bx_rows, gg_rows]:
         for r_idx in rows:
@@ -684,6 +686,10 @@ def upload_template():
         return jsonify({'error': '請選擇正確的範本類型與Word檔案'}), 400
     if not SUPABASE_URL or not SUPABASE_KEY:
         return jsonify({'error': '尚未設定永久儲存服務，未執行上傳'}), 503
+    expected_token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
+    supplied_token = request.headers.get('X-Template-Upload-Token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return jsonify({'error': '範本上傳未授權，請輸入管理密碼'}), 403
     try:
         payload = f.read(5 * 1024 * 1024 + 1)
         validate_template_bytes(payload)
