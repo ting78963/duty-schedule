@@ -40,6 +40,52 @@ def sb_delete(table, match_key, match_val):
 ASSETS = os.path.join(os.path.dirname(__file__), 'assets')
 ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
+TEMPLATE_BUCKET = 'duty-templates'
+TEMPLATE_NAMES = {
+    '平日': 'tmpl_平日.docx', '假日': 'tmpl_假日.docx',
+    '平日取酒': 'tmpl_平日取酒.docx', '假日取酒': 'tmpl_假日取酒.docx'
+}
+DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+def template_bytes(tmpl_path):
+    """Use persistent uploaded template first; bundled GitHub template as fallback."""
+    name = os.path.basename(tmpl_path)
+    if SUPABASE_URL and SUPABASE_KEY:
+        url = f"{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{name}"
+        response = req.get(url, headers={'apikey': SUPABASE_KEY,
+                            'Authorization': f'Bearer {SUPABASE_KEY}'}, timeout=20)
+        if response.status_code == 200:
+            return response.content
+        if response.status_code not in (400, 404):
+            raise RuntimeError(f'無法讀取已上傳的範本：HTTP {response.status_code}')
+    with open(tmpl_path, 'rb') as f:
+        return f.read()
+
+def validate_template_bytes(payload):
+    if len(payload) > 5 * 1024 * 1024:
+        raise ValueError('範本不得超過5MB')
+    if not zipfile.is_zipfile(io.BytesIO(payload)):
+        raise ValueError('檔案不是有效的Word docx')
+    doc = Document(io.BytesIO(payload))
+    if not doc.tables:
+        raise ValueError('Word範本沒有勤務表格')
+    table = doc.tables[0]
+    if len(table.columns) not in (33, 35, 37):
+        raise ValueError('Word範本欄位數不符合勤務表')
+    code_col = len(table.columns) - 5
+    name_col = len(table.columns) - 1
+    codes = {int(row.cells[code_col].text.strip()) for row in table.rows
+             if row.cells[code_col].text.strip().isdigit()}
+    if not {19, 29}.issubset(codes):
+        raise ValueError('Word範本缺少正式代號19或29')
+    for code, label in ((19, '休(補)假'), (29, '公假')):
+        matching = [row for row in table.rows
+                    if row.cells[code_col].text.strip() == str(code)]
+        if not matching or label not in matching[0].cells[name_col].text:
+            raise ValueError(f'代號{code}同排必須保留「{label}」標題')
+    return doc
+
+
 def get_tmpl(is_holiday, has_sake):
     if is_holiday and has_sake: return os.path.join(ASSETS, 'tmpl_假日取酒.docx')
     if is_holiday:              return os.path.join(ASSETS, 'tmpl_假日.docx')
@@ -343,8 +389,7 @@ def generate_word(data):
     sake_times = data.get('sakeTimes', [])
 
     tmpl_path = get_tmpl(is_holiday, has_sake)
-    if not os.path.exists(tmpl_path):
-        raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
+    # Bundled template is a fallback; the latest upload lives in Supabase Storage.
 
     # The DUI templates have two extra columns; derive roster positions from
     # the actual Word table rather than assuming every weekday/holiday layout matches.
@@ -356,7 +401,7 @@ def generate_word(data):
         elif st in ['優','休','補','喪假']: bx.append(s)
         elif st == '公': gg.append(s)
 
-    doc = Document(tmpl_path)
+    doc = Document(io.BytesIO(template_bytes(tmpl_path)))
     t = doc.tables[0]
     table_width = len(t.columns)
     if table_width not in (33, 35, 37):
@@ -635,17 +680,32 @@ def generate_batch():
 def upload_template():
     tmpl_type = request.form.get('type')
     f = request.files.get('file')
-    if not f or not tmpl_type:
-        return jsonify({'error': '缺少參數'}), 400
-    name_map = {
-        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
-        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
-    }
-    fname = name_map.get(tmpl_type)
-    if not fname: return jsonify({'error': '無效類型'}), 400
-    os.makedirs(ASSETS, exist_ok=True)
-    f.save(os.path.join(ASSETS, fname))
-    return jsonify({'ok': True})
+    if not f or tmpl_type not in TEMPLATE_NAMES:
+        return jsonify({'error': '請選擇正確的範本類型與Word檔案'}), 400
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({'error': '尚未設定永久儲存服務，未執行上傳'}), 503
+    try:
+        payload = f.read(5 * 1024 * 1024 + 1)
+        validate_template_bytes(payload)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 400
+    name = TEMPLATE_NAMES[tmpl_type]
+    url = f"{SUPABASE_URL}/storage/v1/object/{TEMPLATE_BUCKET}/{name}"
+    headers = {'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
+               'Content-Type': DOCX_MIME, 'x-upsert': 'true',
+               'Cache-Control': 'no-cache'}
+    try:
+        result = req.post(url, headers=headers, data=payload, timeout=30)
+        if result.status_code not in (200, 201):
+            return jsonify({'error': f'永久儲存失敗 HTTP {result.status_code}'}), 502
+        # Verify the uploaded bytes are actually readable.
+        saved = template_bytes(os.path.join(ASSETS, name))
+        if saved != payload:
+            return jsonify({'error': '儲存後內容驗證失敗'}), 502
+    except Exception as exc:
+        return jsonify({'error': f'範本儲存或驗證失敗：{exc}'}), 502
+    return jsonify({'ok': True, 'type': tmpl_type, 'persistent': True})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
