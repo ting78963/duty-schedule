@@ -1,0 +1,63 @@
+name: Duty template regression checks
+on:
+  push:
+    branches:
+      - fix/duty-approved-templates-20261024
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q app.py duty_blank_safe.py
+      - name: Validate all bundled Word templates
+        run: |
+          python - <<'PY'
+          import os, io
+          import app
+          from docx import Document
+          for label, name in app.TEMPLATE_NAMES.items():
+              path = os.path.join(app.ASSETS, name)
+              payload = open(path, 'rb').read()
+              doc = app.validate_template_bytes(payload)
+              assert len(doc.tables[0].rows) >= 60
+              print(label, len(payload), 'bytes', len(doc.tables[0].rows), 'rows')
+          PY
+      - name: Check custom duty wording survives generation
+        run: |
+          python - <<'PY'
+          import io, os, tempfile
+          import app
+          from docx import Document
+          original = app.get_tmpl(False, False)
+          doc = Document(original)
+          changed = False
+          for row in doc.tables[0].rows:
+              for cell in row.cells:
+                  for para in cell.paragraphs:
+                      for run in para.runs:
+                          if '一線巡邏' in run.text:
+                              run.text = run.text.replace('一線巡邏','測試巡邏文字')
+                              changed = True
+          if not changed:
+              print('Template has no 一線巡邏 run; skipping literal rename check')
+          else:
+              with tempfile.TemporaryDirectory() as d:
+                  modified = os.path.join(d, 'tmpl_平日.docx')
+                  doc.save(modified)
+                  app.validate_template_bytes(open(modified,'rb').read())
+                  old_assets = app.ASSETS
+                  app.ASSETS = d
+                  app.SUPABASE_URL = ''
+                  try:
+                      data = dict(onDuty=[],offDuty=[],rocDate='115年11月1日',weekday='日',isHoliday=False,hasSake=False)
+                      result = app.generate_word(data)
+                      text = '\\n'.join(c.text for row in Document(result).tables[0].rows for c in row.cells)
+                      assert '測試巡邏文字' in text, 'Custom duty wording was lost'
+                  finally:
+                      app.ASSETS = old_assets
+          PY
