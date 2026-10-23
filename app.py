@@ -389,12 +389,12 @@ def generate_word(data):
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
         set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
-    # The leave heading belongs on the row of OFFICIAL ROSTER CODE 16,
+    # The leave heading belongs on the row of OFFICIAL ROSTER CODE 19,
     # never on the physical nineteenth Word table row.
     from copy import deepcopy
-    leave_anchor = ban_to_row.get(16)
+    leave_anchor = ban_to_row.get(19)
     if leave_anchor is None:
-        raise ValueError('Word範本找不到人員代號16，無法定位休(補)假')
+        raise ValueError('Word範本找不到人員代號19，無法定位休(補)假')
     heading_rows = [i for i in range(len(t.rows))
                     if '休(補)假' in t.rows[i].cells[ONAME_COL].text]
     if not heading_rows:
@@ -403,7 +403,7 @@ def generate_word(data):
         source = t.rows[heading_rows[0]].cells[ONAME_COL].paragraphs[0]
         target = t.rows[leave_anchor].cells[ONAME_COL].paragraphs[0]
         if target.text.strip():
-            raise ValueError('代號16同排已有文字，無法安全移動休(補)假標題')
+            raise ValueError('代號19同排已有文字，無法安全移動休(補)假標題')
         if source._p.pPr is not None:
             if target._p.pPr is not None:
                 target._p.remove(target._p.pPr)
@@ -417,11 +417,39 @@ def generate_word(data):
             set_cell(t.rows[r_idx].cells[ONAME_COL], '')
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
 
+    # The leave heading belongs on the row of OFFICIAL ROSTER CODE 29,
+    # never on the physical nineteenth Word table row.
+    from copy import deepcopy
+    public_anchor = ban_to_row.get(29)
+    if public_anchor is None:
+        raise ValueError('Word範本找不到人員代號29，無法定位公假')
+    public_heading_rows = [i for i in range(len(t.rows))
+                    if '公假' in t.rows[i].cells[ONAME_COL].text]
+    if not public_heading_rows:
+        raise ValueError('Word範本缺少公假標題')
+    if public_anchor not in public_heading_rows:
+        source = t.rows[public_heading_rows[0]].cells[ONAME_COL].paragraphs[0]
+        target = t.rows[public_anchor].cells[ONAME_COL].paragraphs[0]
+        if target.text.strip():
+            raise ValueError('代號29同排已有文字，無法安全移動公假標題')
+        if source._p.pPr is not None:
+            if target._p.pPr is not None:
+                target._p.remove(target._p.pPr)
+            target._p.insert(0, deepcopy(source._p.pPr))
+        for run_xml in list(target._p.r_lst):
+            target._p.remove(run_xml)
+        for run_xml in source._p.r_lst:
+            target._p.append(deepcopy(run_xml))
+    for r_idx in public_heading_rows:
+        if r_idx != public_anchor:
+            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
+
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
-    # Leave entries must begin immediately below the fixed row-19 heading.
+    # Leave entries are bounded by the fixed public-leave heading at code 29.
     # Do not reuse legacy scattered positions from older Word templates.
     bx_rows = []
-    for r_idx in range(leave_anchor + 1, len(t.rows)):
+    for r_idx in range(leave_anchor + 1, public_anchor):
         txt = t.rows[r_idx].cells[ONAME_COL].text.strip()
         if txt and any(x in txt for x in ('公假', '附記', '巡邏', '調適')):
             break
