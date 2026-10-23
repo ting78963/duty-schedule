@@ -1,4 +1,4 @@
-"""Clear personnel assignment codes only; retain vehicle identifiers."""
+"""Blank staff assignments in known Word duty layouts, preserving vehicle identifiers."""
 import re
 from docx.oxml.ns import qn
 
@@ -26,8 +26,6 @@ def blank_duty_document(doc):
                 continue
             nodes = list(tc.iter(qn('w:t')))
             value = ''.join(node.text or '' for node in nodes).strip()
-            # Vehicle identifiers (3+ digits, alphanumeric codes, arrows)
-            # are intentionally left unchanged.
             if value and PERSONNEL.fullmatch(value):
                 targets.append(nodes)
     for nodes in targets:
