@@ -311,7 +311,8 @@ def generate_word(data):
     if not os.path.exists(tmpl_path):
         raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
 
-    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+    # The DUI templates have two extra columns; derive roster positions from
+    # the actual Word table rather than assuming every weekday/holiday layout matches.
 
     lx, bx, gg = [], [], []
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
@@ -322,6 +323,12 @@ def generate_word(data):
 
     doc = Document(tmpl_path)
     t = doc.tables[0]
+    table_width = len(t.columns)
+    if table_width not in (33, 35, 37):
+        raise ValueError(f'不支援的勤務表欄數：{table_width}')
+    CODE_COL = table_width - 5
+    NAME_COL, NOTE_COL = CODE_COL + 1, CODE_COL + 2
+    OCODE_COL, ONAME_COL = CODE_COL + 3, CODE_COL + 4
 
     ban_to_row = {}
     for r_idx in range(4, len(t.rows)):
