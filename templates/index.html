@@ -539,11 +539,31 @@ function editStaff(code, name, type) {
 
 // ─── 模板上傳 ───────────────────────────────────────────────
 function uploadTmpl(type) { document.getElementById(`file-${type}`).click(); }
+let templateUploadToken = '';
 async function doUploadTmpl(type, input) {
   const file = input.files[0]; if(!file) return;
+  if(!templateUploadToken) {
+    templateUploadToken = prompt('請輸入範本管理密碼：') || '';
+    if(!templateUploadToken) { input.value = ''; return; }
+  }
   const fd = new FormData(); fd.append('file',file); fd.append('type',type);
-  const res = await fetch('/api/upload-template', {method:'POST', body:fd});
-  if(res.ok) { document.getElementById(`tmpl-${type}`).innerHTML = `<span style="color:var(--green)">✅ ${file.name}</span>`; }
+  try {
+    const res = await fetch('/api/upload-template', {
+      method:'POST', body:fd,
+      headers:{'X-Template-Upload-Token':templateUploadToken}
+    });
+    const data = await res.json().catch(()=>({}));
+    if(res.ok && data.persistent) {
+      document.getElementById(`tmpl-${type}`).innerHTML = `<span style="color:var(--green)">✅ 已永久儲存：${file.name}</span>`;
+    } else {
+      if(res.status === 403) templateUploadToken = '';
+      alert(data.error || '範本上傳失敗，請稍後重試。');
+    }
+  } catch(e) {
+    alert('上傳連線失敗，請檢查網路後重試。');
+  } finally {
+    input.value = '';
+  }
 }
 
 // 初始化
