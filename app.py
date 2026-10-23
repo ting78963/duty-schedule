@@ -126,13 +126,15 @@ def set_red_border(row):
             el.set(f'{{{ns}}}color', 'FF0000')
 
 def find_section_rows(t, oname_col, label):
-    start = None
+    headings = []
     for r_idx in range(len(t.rows)):
         if oname_col >= len(t.rows[r_idx].cells): continue
         if label in t.rows[r_idx].cells[oname_col].text.strip():
-            start = r_idx + 1
-            break
-    if start is None: return []
+            headings.append(r_idx)
+    if len(headings) > 1:
+        raise ValueError(f'Word範本「{label}」出現{len(headings)}次（列號：{[r+1 for r in headings]}），需先確認區塊，避免漏列人員')
+    if not headings: return []
+    start = headings[0] + 1
     rows = []
     for r_idx in range(start, len(t.rows)):
         if oname_col >= len(t.rows[r_idx].cells): break
