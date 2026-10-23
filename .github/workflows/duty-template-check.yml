@@ -104,6 +104,24 @@ jobs:
                   pass
           print('All four upload types and Storage permission failure handling passed')
           PY
+      - name: Generate and inspect all four Word output types
+        run: |
+          python - <<'PY'
+          import app
+          from docx import Document
+          for holiday, sake in ((False,False),(False,True),(True,False),(True,True)):
+              data = {'onDuty':[], 'offDuty':[], 'rocDate':'115年11月2日', 'weekday':'一', 'isHoliday':holiday, 'hasSake':sake}
+              output = app.generate_word(data)
+              doc = Document(output)
+              assert doc.tables, (holiday,sake)
+              table = doc.tables[0]
+              codecol = len(table.columns)-5
+              namecol = len(table.columns)-1
+              codes = {int(row.cells[codecol].text.strip()):row for row in table.rows if row.cells[codecol].text.strip().isdigit()}
+              assert '休(補)假' in codes[19].cells[namecol].text, (holiday,sake)
+              assert '公假' in codes[29].cells[namecol].text, (holiday,sake)
+          print('All four Word output types generated with required headings')
+          PY
       - name: Check custom duty wording survives generation
         run: |
           python - <<'PY'
