@@ -168,7 +168,7 @@ def parse_excel(file_bytes):
 
         for col, name in name_cols.items():
             # 番號在姓名左欄，狀態在右欄
-            ban_val = ws_ext.cell(row=row, column=col-1).value
+            ban_val = ws_ext.cell(row=row, column=col).value
             status_val = ws_ext.cell(row=row, column=col+1).value
 
             ban = None
@@ -452,14 +452,17 @@ def generate_api():
 def generate_batch():
     days_data = request.json
     zip_buf = io.BytesIO()
+    failures = []
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
             try:
                 buf = generate_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
-            except:
-                pass
+            except Exception as exc:
+                failures.append({'date': d.get('rocDate', ''), 'error': str(exc)})
+    if failures:
+        return jsonify({'error': '部分日期產生失敗，未提供不完整的壓縮檔', 'failures': failures}), 422
     zip_buf.seek(0)
     return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
                     mimetype='application/zip')
