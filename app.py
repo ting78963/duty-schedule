@@ -418,7 +418,16 @@ def generate_word(data):
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
-    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
+    # Leave entries must begin immediately below the fixed row-19 heading.
+    # Do not reuse legacy scattered positions from older Word templates.
+    bx_rows = []
+    for r_idx in range(19, len(t.rows)):
+        txt = t.rows[r_idx].cells[ONAME_COL].text.strip()
+        if txt and any(x in txt for x in ('公假', '附記', '巡邏', '調適')):
+            break
+        if '休(補)假' in txt:
+            continue
+        bx_rows.append(r_idx)
     gg_rows = find_section_rows(t, ONAME_COL, '公假')
 
     for rows in [lx_rows, bx_rows, gg_rows]:
