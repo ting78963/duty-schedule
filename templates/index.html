@@ -541,8 +541,10 @@ function editStaff(code, name, type) {
 function uploadTmpl(type) { document.getElementById(`file-${type}`).click(); }
 async function doUploadTmpl(type, input) {
   const file = input.files[0]; if(!file) return;
+  const token = prompt('請輸入範本更新管理密碼：');
+  if(!token) { input.value = ''; return; }
   const fd = new FormData(); fd.append('file',file); fd.append('type',type);
-  const res = await fetch('/api/upload-template', {method:'POST', body:fd});
+  const res = await fetch('/api/upload-template', {method:'POST', headers:{'X-Template-Upload-Token':token}, body:fd});
   let result = {};
   try { result = await res.json(); } catch (_) {}
   if(res.ok && result.persistent) {
