@@ -1,0 +1,62 @@
+name: Seed approved duty templates once
+
+on:
+  push:
+    branches:
+      - ops/seed-approved-templates-once
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/duty-approved-templates-20261024
+          path: approved_templates
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Upload approved templates only when absent
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PY'
+          import os, io, uuid, hashlib
+          from pathlib import Path
+          import requests
+          import app
+
+          url=os.environ['SUPABASE_URL'].rstrip('/')
+          key=os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          assert url and key, 'Missing Supabase Actions secrets'
+          headers={'apikey':key,'Authorization':'Bearer '+key}
+          files=[
+              'tmpl_平日.docx',
+              'tmpl_假日.docx',
+              'tmpl_平日取酒.docx',
+              'tmpl_假日取酒.docx',
+          ]
+          for name in files:
+              source=Path('approved_templates/assets')/name
+              assert source.is_file(), f'Approved template missing: {source}'
+              payload=source.read_bytes()
+              app.validate_template_bytes(payload)
+              read_url=f'{url}/storage/v1/object/authenticated/duty-templates/{name}?v={uuid.uuid4().hex}'
+              check=requests.get(read_url,headers=headers,timeout=30)
+              if check.status_code == 200:
+                  print(f'SKIP existing official template (no overwrite): {name}')
+                  continue
+              assert check.status_code == 404, f'Cannot safely check {name}: HTTP {check.status_code}'
+              upload_url=f'{url}/storage/v1/object/duty-templates/{name}'
+              result=requests.post(upload_url,headers={**headers,'Content-Type':app.DOCX_MIME,'x-upsert':'false'},data=payload,timeout=60)
+              assert result.status_code in (200,201), f'Upload failed for {name}: HTTP {result.status_code} {result.text[:160]}'
+              saved=requests.get(read_url,headers=headers,timeout=30)
+              assert saved.status_code == 200, f'Readback failed for {name}: HTTP {saved.status_code}'
+              assert hashlib.sha256(saved.content).digest()==hashlib.sha256(payload).digest(), f'Content mismatch: {name}'
+              print(f'UPLOADED AND VERIFIED: {name} ({len(payload)} bytes)')
+          print('All missing approved templates seeded; existing official templates were never overwritten.')
+          PY
