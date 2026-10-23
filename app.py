@@ -45,13 +45,21 @@ TEMPLATE_NAMES = {
     '平日': 'tmpl_平日.docx', '假日': 'tmpl_假日.docx',
     '平日取酒': 'tmpl_平日取酒.docx', '假日取酒': 'tmpl_假日取酒.docx'
 }
+# Supabase Storage object keys use stable ASCII names; user-facing Word filenames remain Chinese.
+TEMPLATE_STORAGE_NAMES = {
+    'tmpl_平日.docx': 'weekday.docx',
+    'tmpl_假日.docx': 'holiday.docx',
+    'tmpl_平日取酒.docx': 'weekday_sake.docx',
+    'tmpl_假日取酒.docx': 'holiday_sake.docx',
+}
 DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 def template_bytes(tmpl_path):
     """Read the uploaded private Supabase template first, then use bundled file if no upload exists."""
     name = os.path.basename(tmpl_path)
+    storage_name = TEMPLATE_STORAGE_NAMES.get(name, name)
     if SUPABASE_URL and SUPABASE_KEY:
-        url = f"{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{name}"
+        url = f"{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{storage_name}"
         response = req.get(url + '?v=' + uuid.uuid4().hex, headers={
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
@@ -537,7 +545,8 @@ def upload_template():
     except Exception as exc:
         return jsonify({'error': str(exc)}), 400
     name = TEMPLATE_NAMES[tmpl_type]
-    url = f"{SUPABASE_URL}/storage/v1/object/{TEMPLATE_BUCKET}/{name}"
+    storage_name = TEMPLATE_STORAGE_NAMES.get(name, name)
+    url = f"{SUPABASE_URL}/storage/v1/object/{TEMPLATE_BUCKET}/{storage_name}"
     headers = {'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
                'Content-Type': DOCX_MIME, 'x-upsert': 'true',
                'Cache-Control': 'no-cache'}
