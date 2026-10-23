@@ -543,7 +543,13 @@ async function doUploadTmpl(type, input) {
   const file = input.files[0]; if(!file) return;
   const fd = new FormData(); fd.append('file',file); fd.append('type',type);
   const res = await fetch('/api/upload-template', {method:'POST', body:fd});
-  if(res.ok) { document.getElementById(`tmpl-${type}`).innerHTML = `<span style="color:var(--green)">✅ ${file.name}</span>`; }
+  let result = {};
+  try { result = await res.json(); } catch (_) {}
+  if(res.ok && result.persistent) {
+    document.getElementById(`tmpl-${type}`).innerHTML = `<span style="color:var(--green)">✅ 已永久儲存：${file.name}</span>`;
+  } else {
+    alert('範本更新失敗：' + (result.error || '伺服器未確認儲存成功'));
+  }
 }
 
 // 初始化
