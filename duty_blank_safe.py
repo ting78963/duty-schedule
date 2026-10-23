@@ -34,7 +34,7 @@ def blank_duty_document(doc):
                            and COMBINED.fullmatch(val) is not None)
             if not val:
                 continue
-            if STAFF.fullmatch(val) or is_combined or DUTY_VEHICLE.fullmatch(val):
+            if STAFF.fullmatch(val) or is_combined or DUTY_VEHICLE.fullmatch(val) or COMBINED.fullmatch(val):
                 changes.append(nodes)
             elif re.search(r'\d', val):
                 review.append([row, start, val[:80]])
