@@ -205,6 +205,42 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
+    # ── 內勤：使用已驗收 Word 的正式代號，Excel 決定當日姓名/狀態 ──
+    # 不以 Excel 欄位順序推測代號；沒有代號的新進人員不寫入。
+    internal_codes = {
+        '林筠臻':23, '黃雅琳':26, '洪君智':27, '楊智為':28,
+        '陳淑卿':29, '謝函儒':31, '曾義雄':33, '姚宗志':35,
+        '柯育婷':36, '林裕善':38, '王庭偉':39, '林家豪':41,
+        '張銥凌':42, '翁水成':43, '洪呈欣':44, '簡竹芳':45,
+        '沈宗漢':46, '曾煙煌':47, '陳駿騰':48, '李智偉':50,
+        '林新慶':51, '李金孔':52, '董安民':53, '陳昱靜':54,
+    }
+    if '全隊大表' in wb.sheetnames:
+        ws_all = wb['全隊大表']
+        cols = [(c, str(ws_all.cell(2, c).value).strip())
+                for c in range(49, 75) if ws_all.cell(2, c).value]
+        for row in range(3, ws_all.max_row + 1):
+            date_val = ws_all.cell(row, 1).value
+            if not isinstance(date_val, datetime):
+                continue
+            key = f'{date_val.year - 1911}年{date_val.month}月{date_val.day}日'
+            if key not in monthly_data:
+                continue
+            day = monthly_data[key]
+            for col, name in cols:
+                code = internal_codes.get(name)
+                if code is None:
+                    continue
+                raw = str(ws_all.cell(row, col).value or '').strip()
+                person = {'name': name, 'ban': code,
+                          'status': '留職停薪' if name == '林筠臻' else raw}
+                # 內勤「輪」不是請假；只列明確的休假狀態。
+                is_leave = raw in ('優', '休', '補', '公')
+                (day['off_duty'] if is_leave else day['on_duty']).append(person)
+                staff_from_excel[name] = True
+            day['on_duty'].sort(key=lambda p: p.get('ban') or 999)
+            day['off_duty'].sort(key=lambda p: p.get('ban') or 999)
+
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
@@ -291,7 +327,7 @@ def generate_word(data):
     for r_idx in range(4, len(t.rows)):
         if CODE_COL >= len(t.rows[r_idx].cells): continue
         ct = t.rows[r_idx].cells[CODE_COL].text.strip()
-        if ct.isdigit() and 1 <= int(ct) <= 20:
+        if ct.isdigit() and 1 <= int(ct) <= 63:
             ban_to_row[int(ct)] = r_idx
 
     for ban, r_idx in ban_to_row.items():
