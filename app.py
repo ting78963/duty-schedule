@@ -327,7 +327,7 @@ def generate_word(data):
     for r_idx in range(4, len(t.rows)):
         if CODE_COL >= len(t.rows[r_idx].cells): continue
         ct = t.rows[r_idx].cells[CODE_COL].text.strip()
-        if ct.isdigit() and 1 <= int(ct) <= 63:
+        if ct.isdigit() and 1 <= int(ct) <= 54:
             ban_to_row[int(ct)] = r_idx
 
     for ban, r_idx in ban_to_row.items():
