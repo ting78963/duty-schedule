@@ -72,6 +72,38 @@ jobs:
               assert '測試更新巡邏' in text, 'Uploaded text was overwritten during generation'
           print('Upload, readback, auth, and text persistence passed (mocked Storage)')
           PY
+      - name: Check all four upload variants and fail-closed storage errors
+        run: |
+          python - <<'PY'
+          import io, os
+          from unittest.mock import patch
+          import app
+          class Response:
+              def __init__(self, status_code, content=b''):
+                  self.status_code, self.content = status_code, content
+          saved = {}
+          def post(url, headers=None, data=None, timeout=None):
+              saved[url.split('/')[-1]] = data
+              return Response(200)
+          def get(url, headers=None, timeout=None):
+              name = url.split('/')[-1]
+              return Response(200, saved[name]) if name in saved else Response(404)
+          with patch.object(app, 'SUPABASE_URL', 'https://test.supabase.co'), patch.object(app, 'SUPABASE_KEY', 'test-key'), patch.dict(os.environ, {'TEMPLATE_UPLOAD_TOKEN':'test-secret'}), patch.object(app.req, 'post', side_effect=post), patch.object(app.req, 'get', side_effect=get):
+              client = app.app.test_client()
+              for label, name in app.TEMPLATE_NAMES.items():
+                  payload = open(os.path.join(app.ASSETS,name),'rb').read()
+                  response = client.post('/api/upload-template',data={'type':label,'file':(io.BytesIO(payload),name)},headers={'X-Template-Upload-Token':'test-secret'},content_type='multipart/form-data')
+                  assert response.status_code == 200, (label,response.data)
+                  assert app.template_bytes(os.path.join(app.ASSETS,name)) == payload, label
+              assert len(saved) == 4
+          with patch.object(app, 'SUPABASE_URL', 'https://test.supabase.co'), patch.object(app, 'SUPABASE_KEY', 'test-key'), patch.object(app.req, 'get', return_value=Response(403)):
+              try:
+                  app.template_bytes(os.path.join(app.ASSETS, 'tmpl_平日.docx'))
+                  raise AssertionError('403 was silently treated as missing template')
+              except RuntimeError:
+                  pass
+          print('All four upload types and Storage permission failure handling passed')
+          PY
       - name: Check custom duty wording survives generation
         run: |
           python - <<'PY'
