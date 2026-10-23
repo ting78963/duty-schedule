@@ -544,7 +544,14 @@ async function doUploadTmpl(type, input) {
   const token = prompt('請輸入範本更新管理密碼：');
   if(!token) { input.value = ''; return; }
   const fd = new FormData(); fd.append('file',file); fd.append('type',type);
-  const res = await fetch('/api/upload-template', {method:'POST', headers:{'X-Template-Upload-Token':token}, body:fd});
+  let res;
+  try {
+    res = await fetch('/api/upload-template', {method:'POST', headers:{'X-Template-Upload-Token':token}, body:fd});
+  } catch (_) {
+    alert('上傳失敗：網路連線中斷，請稍後重試');
+    input.value = '';
+    return;
+  }
   let result = {};
   try { result = await res.json(); } catch (_) {}
   if(res.ok && result.persistent) {
@@ -552,6 +559,7 @@ async function doUploadTmpl(type, input) {
   } else {
     alert('範本更新失敗：' + (result.error || '伺服器未確認儲存成功'));
   }
+  input.value = '';
 }
 
 // 初始化
