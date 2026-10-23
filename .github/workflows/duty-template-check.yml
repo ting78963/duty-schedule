@@ -27,6 +27,51 @@ jobs:
               assert len(doc.tables[0].rows) >= 60
               print(label, len(payload), 'bytes', len(doc.tables[0].rows), 'rows')
           PY
+      - name: Verify private Storage upload and readback with mocked Supabase
+        run: |
+          python - <<'PY'
+          import io, os
+          from unittest.mock import patch
+          import app
+          from docx import Document
+          original = open(os.path.join(app.ASSETS, app.TEMPLATE_NAMES['平日']), 'rb').read()
+          doc = Document(io.BytesIO(original))
+          found = False
+          for row in doc.tables[0].rows:
+              for cell in row.cells:
+                  for para in cell.paragraphs:
+                      for run in para.runs:
+                          if '一線巡邏' in run.text:
+                              run.text = run.text.replace('一線巡邏', '測試更新巡邏')
+                              found = True
+          assert found, 'Original template missing 一線巡邏; test would be inconclusive'
+          output = io.BytesIO()
+          doc.save(output)
+          payload = output.getvalue()
+          storage = {}
+          class Response:
+              def __init__(self, status_code, content=b''):
+                  self.status_code = status_code
+                  self.content = content
+          def post(url, headers=None, data=None, timeout=None):
+              assert headers['x-upsert'] == 'true'
+              storage['file'] = data
+              return Response(200)
+          def get(url, headers=None, timeout=None):
+              return Response(200, storage['file']) if 'file' in storage else Response(404)
+          with patch.object(app, 'SUPABASE_URL', 'https://test.supabase.co'), patch.object(app, 'SUPABASE_KEY', 'test-key'), patch.dict(os.environ, {'TEMPLATE_UPLOAD_TOKEN': 'test-secret'}), patch.object(app.req, 'post', side_effect=post), patch.object(app.req, 'get', side_effect=get):
+              client = app.app.test_client()
+              denied = client.post('/api/upload-template', data={'type':'平日','file':(io.BytesIO(payload),'edited.docx')}, content_type='multipart/form-data')
+              assert denied.status_code == 403, denied.data
+              uploaded = client.post('/api/upload-template', data={'type':'平日','file':(io.BytesIO(payload),'edited.docx')}, headers={'X-Template-Upload-Token':'test-secret'}, content_type='multipart/form-data')
+              assert uploaded.status_code == 200, uploaded.data
+              assert uploaded.json['persistent'] is True
+              assert storage['file'] == payload
+              result = app.generate_word(dict(onDuty=[],offDuty=[],rocDate='115年11月1日',weekday='日',isHoliday=False,hasSake=False))
+              text = '\\n'.join(c.text for row in Document(result).tables[0].rows for c in row.cells)
+              assert '測試更新巡邏' in text, 'Uploaded text was overwritten during generation'
+          print('Upload, readback, auth, and text persistence passed (mocked Storage)')
+          PY
       - name: Check custom duty wording survives generation
         run: |
           python - <<'PY'
