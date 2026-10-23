@@ -362,6 +362,10 @@ def generate_word(data):
                 if h in time_to_row:
                     set_red_border(t.rows[time_to_row[h]])
 
+    # Clear only daily assignment codes after all other Word edits are complete.
+    # Unknown template layouts abort instead of risking a damaged duty sheet.
+    from duty_blank_safe import blank_duty_document
+    blank_duty_document(doc)
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
