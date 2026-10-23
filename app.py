@@ -389,20 +389,32 @@ def generate_word(data):
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
         set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
-    # The approved layout anchors 休(補)假 to the row whose roster code is 15,
-    # not to the person's name (which can change each day).  Remove only a
-    # duplicate heading below that anchor; never remove the canonical heading.
+    # Anchor the leave heading to roster code 15, regardless of staff name.
+    # Older approved templates place the heading three rows lower. Move its
+    # original formatted runs to the code-15 row, preserving Word typography.
+    from copy import deepcopy
     leave_anchor = ban_to_row.get(15)
     if leave_anchor is None:
         raise ValueError('Word範本缺少代號15，無法定位休(補)假標題')
-    canonical = t.rows[leave_anchor].cells[ONAME_COL]
-    if '休(補)假' not in canonical.text:
-        raise ValueError('代號15同排缺少休(補)假標題，請確認Word範本')
-    for r_idx in range(leave_anchor + 1, len(t.rows)):
-        txt = t.rows[r_idx].cells[ONAME_COL].text.strip()
-        if txt and any(x in txt for x in ('公假', '附記', '巡邏', '調適')):
-            break
-        if '休(補)假' in txt:
+    heading_rows = [i for i in range(len(t.rows))
+                    if '休(補)假' in t.rows[i].cells[ONAME_COL].text]
+    if not heading_rows:
+        raise ValueError('Word範本缺少休(補)假標題')
+    if leave_anchor not in heading_rows:
+        source = t.rows[heading_rows[0]].cells[ONAME_COL].paragraphs[0]
+        target = t.rows[leave_anchor].cells[ONAME_COL].paragraphs[0]
+        if target.text.strip():
+            raise ValueError('代號15同排已有文字，無法安全移動休(補)假標題')
+        if source._p.pPr is not None:
+            if target._p.pPr is not None:
+                target._p.remove(target._p.pPr)
+            target._p.insert(0, deepcopy(source._p.pPr))
+        for run_xml in list(target._p.r_lst):
+            target._p.remove(run_xml)
+        for run_xml in source._p.r_lst:
+            target._p.append(deepcopy(run_xml))
+    for r_idx in heading_rows:
+        if r_idx != leave_anchor:
             set_cell(t.rows[r_idx].cells[ONAME_COL], '')
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
 
