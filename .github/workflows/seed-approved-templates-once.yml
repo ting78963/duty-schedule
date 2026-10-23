@@ -40,17 +40,20 @@ jobs:
               'tmpl_平日取酒.docx',
               'tmpl_假日取酒.docx',
           ]
+          listing=requests.post(f'{url}/storage/v1/object/list/duty-templates',
+              headers={**headers,'Content-Type':'application/json'},
+              json={'prefix':'','limit':1000,'offset':0,'sortBy':{'column':'name','order':'asc'}},timeout=30)
+          assert listing.status_code == 200, f'Cannot safely list existing templates: HTTP {listing.status_code} {listing.text[:160]}'
+          existing_names={item.get('name') for item in listing.json()}
           for name in files:
               source=Path('approved_templates/assets')/name
               assert source.is_file(), f'Approved template missing: {source}'
               payload=source.read_bytes()
               app.validate_template_bytes(payload)
               read_url=f'{url}/storage/v1/object/authenticated/duty-templates/{name}?v={uuid.uuid4().hex}'
-              check=requests.get(read_url,headers=headers,timeout=30)
-              if check.status_code == 200:
+              if name in existing_names:
                   print(f'SKIP existing official template (no overwrite): {name}')
                   continue
-              assert check.status_code == 404, f'Cannot safely check {name}: HTTP {check.status_code}'
               upload_url=f'{url}/storage/v1/object/duty-templates/{name}'
               result=requests.post(upload_url,headers={**headers,'Content-Type':app.DOCX_MIME,'x-upsert':'false'},data=payload,timeout=60)
               assert result.status_code in (200,201), f'Upload failed for {name}: HTTP {result.status_code} {result.text[:160]}'
