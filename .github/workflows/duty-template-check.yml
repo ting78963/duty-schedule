@@ -162,7 +162,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests
+      - run: pip install -r requirements.txt
       - name: Real private Storage upload readback and cleanup
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -186,6 +186,16 @@ jobs:
               assert r.status_code==200,f'readback HTTP {r.status_code}'
               assert hashlib.sha256(r.content).digest()==hashlib.sha256(payload).digest(),'Readback differs'
               print('REAL STORAGE UPLOAD AND READBACK PASSED')
+              import io
+              from unittest.mock import patch
+              from docx import Document
+              import app
+              doc=Document(io.BytesIO(r.content))
+              assert doc.tables, 'Stored template missing Word table'
+              with patch.object(app,'SUPABASE_URL',url),patch.object(app,'SUPABASE_KEY',key):
+                  stored=app.template_bytes(app.get_tmpl(False,False).replace('tmpl_平日.docx',name))
+              assert stored==payload, 'App loader did not use private Storage'
+              print('APP TEMPLATE LOADER READBACK PASSED')
           finally:
               if uploaded:
                   r=requests.delete(base,headers=headers,timeout=30)
