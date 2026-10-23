@@ -1,0 +1,35 @@
+name: Persistent template release checks
+
+on:
+  push:
+    branches:
+      - release/persistent-template-upload-20261024
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install application dependencies
+        run: pip install -r requirements.txt
+      - name: Check Python syntax
+        run: python -m py_compile app.py
+      - name: Verify upload UI sends authorization and checks persistent result
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html = Path('templates/index.html').read_text(encoding='utf-8')
+          app = Path('app.py').read_text(encoding='utf-8')
+          assert "X-Template-Upload-Token" in html
+          assert "data.persistent" in html
+          assert "TEMPLATE_UPLOAD_TOKEN" in app
+          assert "storage/v1/object/" in app
+          assert "validate_template_bytes" in app
+          print("Release static checks passed")
+          PY
