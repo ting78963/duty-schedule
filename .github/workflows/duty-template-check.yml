@@ -155,3 +155,41 @@ jobs:
                   finally:
                       app.ASSETS = old_assets
           PY
+  live-storage:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: Real private Storage upload readback and cleanup
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PY'
+          import os, hashlib, uuid, requests
+          url=os.environ['SUPABASE_URL'].rstrip('/')
+          key=os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          assert url and key, 'Missing Supabase Actions secrets'
+          name='qa-only/'+uuid.uuid4().hex+'.docx'
+          payload=open('assets/tmpl_平日.docx','rb').read()
+          base=f'{url}/storage/v1/object/duty-templates/{name}'
+          headers={'apikey':key,'Authorization':'Bearer '+key}
+          uploaded=False
+          try:
+              r=requests.post(base,headers={**headers,'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},data=payload,timeout=30)
+              assert r.status_code in (200,201),f'upload HTTP {r.status_code}: {r.text[:200]}'
+              uploaded=True
+              r=requests.get(base.replace('/object/','/object/authenticated/'),headers=headers,timeout=30)
+              assert r.status_code==200,f'readback HTTP {r.status_code}'
+              assert hashlib.sha256(r.content).digest()==hashlib.sha256(payload).digest(),'Readback differs'
+              print('REAL STORAGE UPLOAD AND READBACK PASSED')
+          finally:
+              if uploaded:
+                  r=requests.delete(base,headers=headers,timeout=30)
+                  assert r.status_code in (200,204),f'cleanup HTTP {r.status_code}'
+                  print('QA test file deleted')
+          PY
