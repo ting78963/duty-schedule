@@ -180,7 +180,7 @@ def parse_excel(file_bytes):
             status = ''
             if status_val and str(status_val).strip():
                 raw = str(status_val).strip()
-                for s in ['輪','優','休','補','公']:
+                for s in ['喪假','輪','優','休','補','公']:
                     if s in raw:
                         status = s
                         break
@@ -188,7 +188,7 @@ def parse_excel(file_bytes):
                     status = raw[:2]  # 常訓等備考
 
             person = {'name': name, 'ban': ban, 'status': status}
-            off_statuses = ['輪','優','休','補','公']
+            off_statuses = ['輪','優','休','補','公','喪假']
             if any(s == status for s in off_statuses):
                 off_duty.append(person)
             else:
@@ -318,7 +318,7 @@ def generate_word(data):
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補']: bx.append(s)
+        elif st in ['優','休','補','喪假']: bx.append(s)
         elif st == '公': gg.append(s)
 
     doc = Document(tmpl_path)
