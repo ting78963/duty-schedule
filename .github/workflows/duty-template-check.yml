@@ -196,6 +196,35 @@ jobs:
                   stored=app.template_bytes(name)
               assert stored==payload, 'App loader did not use private Storage'
               print('APP TEMPLATE LOADER READBACK PASSED')
+              # Exercise the actual Flask upload endpoint against a unique QA object.
+              modified=Document(io.BytesIO(payload))
+              changed=False
+              for table in modified.tables:
+                  for row in table.rows:
+                      for cell in row.cells:
+                          for para in cell.paragraphs:
+                              for run in para.runs:
+                                  if '一線巡邏' in run.text:
+                                      run.text=run.text.replace('一線巡邏','測試巡邏文字')
+                                      changed=True
+              assert changed, 'Patrol label not found in test template'
+              buffer=io.BytesIO()
+              modified.save(buffer)
+              modified_payload=buffer.getvalue()
+              with patch.object(app,'SUPABASE_URL',url),patch.object(app,'SUPABASE_KEY',key),patch.dict(os.environ,{'TEMPLATE_UPLOAD_TOKEN':'qa-temporary-token'}),patch.dict(app.TEMPLATE_NAMES,{'平日':name}):
+                  client=app.app.test_client()
+                  denied=client.post('/api/upload-template',data={'type':'平日','file':(io.BytesIO(modified_payload),'qa.docx')},content_type='multipart/form-data')
+                  assert denied.status_code==403, f'Unauthenticated upload accepted: {denied.status_code}'
+                  response=client.post('/api/upload-template',data={'type':'平日','file':(io.BytesIO(modified_payload),'qa.docx')},content_type='multipart/form-data',headers={'X-Template-Upload-Token':'qa-temporary-token'})
+                  assert response.status_code==200 and response.json.get('persistent'),f'Flask upload failed: {response.status_code} {response.get_json()}'
+                  stored=app.template_bytes(name)
+                  assert stored==modified_payload,'Flask uploaded file differs from stored bytes'
+                  with patch.object(app,'get_tmpl',return_value=name):
+                      output=app.generate_word(dict(onDuty=[],offDuty=[],rocDate='115年11月1日',weekday='日',isHoliday=False,hasSake=False))
+                  result_doc=Document(output)
+                  text_content='\\n'.join(cell.text for table in result_doc.tables for row in table.rows for cell in row.cells)
+                  assert '測試巡邏文字' in text_content,'Generated Word did not preserve uploaded patrol wording'
+              print('REAL FLASK UPLOAD, AUTH, PERSISTENCE AND WORD GENERATION PASSED')
           finally:
               if uploaded:
                   r=requests.delete(base,headers=headers,timeout=30)
