@@ -435,6 +435,14 @@ def generate_word(data):
             set_cell(t.rows[r_idx].cells[OCODE_COL], '')
             set_cell(t.rows[r_idx].cells[ONAME_COL], '')
 
+    # Merged right-hand code cells can silently overwrite two different staff
+    # codes (seen in the 11/14 approved template). Refuse unsafe output.
+    for section_name, people, rows in [('輪休', lx, lx_rows), ('休補假', bx, bx_rows), ('公假', gg, gg_rows)]:
+        selected = rows[:len(people)]
+        for col, label in ((OCODE_COL, '代號'), (ONAME_COL, '姓名')):
+            ids = [id(t.rows[i].cells[col]._tc) for i in selected]
+            if len(ids) != len(set(ids)):
+                raise ValueError(f'{section_name}{label}欄有合併儲存格，無法逐人填入；請修正Word範本')
     for section_name, people, rows in [('輪休', lx, lx_rows), ('休補假', bx, bx_rows), ('公假', gg, gg_rows)]:
         if len(people) > len(rows):
             raise ValueError(f'{section_name}名單有{len(people)}人，但Word只有{len(rows)}個欄位，已停止產生以免漏人')
