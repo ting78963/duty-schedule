@@ -232,11 +232,13 @@ def parse_excel(file_bytes):
                 if code is None:
                     continue
                 raw = str(ws_all.cell(row, col).value or '').strip()
+                is_field = name in ('李金孔', '林新慶', '李智偉', '董安民')
+                stopped_leave = is_field and '輪' in raw and ('Δ' in raw or '△' in raw or '▲' in raw or '▵' in raw)
                 person = {'name': name, 'ban': code,
-                          'status': '留職停薪' if name == '林筠臻' else (
-                              '輪' if name in ('李金孔', '林新慶', '李智偉', '董安民') and '輪' in raw else raw)}
-                # 內勤「輪」不是請假；只列明確的休假狀態。
-                is_leave = raw in ('優', '休', '補', '公') or (name in ('李金孔', '林新慶', '李智偉', '董安民') and '輪' in raw)
+                          'status': '留職停薪' if name == '林筠臻' else ('輪' if is_field and '輪' in raw and not stopped_leave else raw),
+                          'stopped_leave': stopped_leave}
+                # 三角形加「輪」表示停休支援取締酒駕：備考顯示停休，不列右側輪休。
+                is_leave = not stopped_leave and (raw in ('優', '休', '補', '公') or (is_field and '輪' in raw))
                 (day['off_duty'] if is_leave else day['on_duty']).append(person)
                 staff_from_excel[name] = True
             day['on_duty'].sort(key=lambda p: p.get('ban') or 999)
@@ -347,13 +349,13 @@ def generate_word(data):
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '')
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
     for s in off_duty:
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
         set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else '')
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], '留職停薪' if ban == 23 and s['name'] == '林筠臻' else ('停休' if s.get('stopped_leave') else ''))
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
     bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
