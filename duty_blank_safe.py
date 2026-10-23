@@ -26,7 +26,13 @@ def blank_duty_document(doc):
                 continue
             nodes = list(tc.iter(qn('w:t')))
             value = ''.join(node.text or '' for node in nodes).strip()
-            if value and PERSONNEL.fullmatch(value):
+            # The 37-column layout also stores concatenated personnel codes
+            # (e.g. 951 = 9/5/1). Only clear known, verified positions
+            # and values; ordinary 3-4 digit vehicle IDs remain intact.
+            combined_personnel = (width == 37 and row <= 39
+                                  and start not in (4, 5, 6, 7)
+                                  and value in ('951', '852', '1453', '1016', '810'))
+            if value and (PERSONNEL.fullmatch(value) or combined_personnel):
                 targets.append(nodes)
     for nodes in targets:
         for node in nodes:
