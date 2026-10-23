@@ -26,6 +26,7 @@ jobs:
         run: |
           python - <<'PY'
           import os, io, uuid, hashlib
+          from urllib.parse import quote
           from pathlib import Path
           import requests
           import app
@@ -50,11 +51,12 @@ jobs:
               assert source.is_file(), f'Approved template missing: {source}'
               payload=source.read_bytes()
               app.validate_template_bytes(payload)
-              read_url=f'{url}/storage/v1/object/authenticated/duty-templates/{name}?v={uuid.uuid4().hex}'
+              encoded_name=quote(name, safe='')
+              read_url=f'{url}/storage/v1/object/authenticated/duty-templates/{encoded_name}?v={uuid.uuid4().hex}'
               if name in existing_names:
                   print(f'SKIP existing official template (no overwrite): {name}')
                   continue
-              upload_url=f'{url}/storage/v1/object/duty-templates/{name}'
+              upload_url=f'{url}/storage/v1/object/duty-templates/{encoded_name}'
               result=requests.post(upload_url,headers={**headers,'Content-Type':app.DOCX_MIME,'x-upsert':'false'},data=payload,timeout=60)
               assert result.status_code in (200,201), f'Upload failed for {name}: HTTP {result.status_code} {result.text[:160]}'
               saved=requests.get(read_url,headers=headers,timeout=30)
