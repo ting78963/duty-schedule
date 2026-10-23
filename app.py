@@ -79,7 +79,19 @@ def set_cell(cell, text, size=None, color='000000'):
                     el = rpr.find(f'{{{ns}}}{tag}')
                     if el is not None: rpr.remove(el)
             return
-    cell.paragraphs[0].add_run(text)
+    # Blank template cells often have no runs: explicitly style the newly added run.
+    run = cell.paragraphs[0].add_run(text)
+    run.font.name = '標楷體'
+    rpr = run._r.get_or_add_rPr()
+    fonts = rpr.find(f'{{{ns}}}rFonts')
+    if fonts is None: fonts = etree.SubElement(rpr, f'{{{ns}}}rFonts')
+    for attr in ['ascii','hAnsi','eastAsia','cs']:
+        fonts.set(f'{{{ns}}}{attr}', '標楷體')
+    if size:
+        for tag in ['sz','szCs']:
+            el = rpr.find(f'{{{ns}}}{tag}')
+            if el is None: el = etree.SubElement(rpr, f'{{{ns}}}{tag}')
+            el.set(f'{{{ns}}}val', str(size))
 
 def set_red_border(row):
     for cell in row.cells:
