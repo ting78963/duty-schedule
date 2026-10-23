@@ -126,19 +126,22 @@ def set_red_border(row):
             el.set(f'{{{ns}}}color', 'FF0000')
 
 def find_section_rows(t, oname_col, label):
-    headings = []
+    # Some approved templates (e.g. 11/20) repeat 休(補)假 inside the
+    # same section. Keep those heading rows untouched and use the blank/name
+    # slots on both sides of the repeated heading.
+    start = None
     for r_idx in range(len(t.rows)):
         if oname_col >= len(t.rows[r_idx].cells): continue
         if label in t.rows[r_idx].cells[oname_col].text.strip():
-            headings.append(r_idx)
-    if len(headings) > 1:
-        raise ValueError(f'Word範本「{label}」出現{len(headings)}次（列號：{[r+1 for r in headings]}），需先確認區塊，避免漏列人員')
-    if not headings: return []
-    start = headings[0] + 1
+            start = r_idx + 1
+            break
+    if start is None: return []
     rows = []
     for r_idx in range(start, len(t.rows)):
         if oname_col >= len(t.rows[r_idx].cells): break
         txt = t.rows[r_idx].cells[oname_col].text.strip()
+        if label in txt:
+            continue
         if txt and any(x in txt for x in ['假','附記','巡邏','調適']): break
         rows.append(r_idx)
     return rows
