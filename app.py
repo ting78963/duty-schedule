@@ -299,6 +299,716 @@ def sync_staff(staff_names):
     new_names = [n for n in staff_names if n not in existing_names]
     return new_names  # 回傳新人員名單讓前端確認
 
+def blank_manual_duty_codes(doc):
+    """Clear only verified daily-assignment cells; fail closed on unknown layouts."""
+    from docx.oxml.ns import qn
+    if not doc.tables:
+        raise ValueError('勤務表沒有主表格')
+    table = doc.tables[0]
+    width = len(table.columns)
+    if len(table.rows) != 64 or width not in (33, 35, 37):
+        raise ValueError(f'勤務表版型未驗證：{len(table.rows)}列、{width}欄')
+    staff_pattern = re.compile(r'^\\s*\\(?\\d{1,2}\\)?(?:[\\s、,，/＋+]+\\(?\\d{1,2}\\)?)*\\s*
+    on_duty  = data['onDuty']
+    off_duty = data['offDuty']
+    roc_date = data['rocDate']
+    weekday  = data['weekday']
+    is_holiday = data['isHoliday']
+    has_sake   = data.get('hasSake', False)
+    sake_times = data.get('sakeTimes', [])
+
+    tmpl_path = get_tmpl(is_holiday, has_sake)
+    if not os.path.exists(tmpl_path):
+        raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
+
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+
+    lx, bx, gg = [], [], []
+    for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
+        st = s.get('status') or ''
+        if st == '輪': lx.append(s)
+        elif st in ['優','休','補']: bx.append(s)
+        elif st == '公': gg.append(s)
+
+    doc = Document(tmpl_path)
+    t = doc.tables[0]
+
+    ban_to_row = {}
+    for r_idx in range(4, len(t.rows)):
+        if CODE_COL >= len(t.rows[r_idx].cells): continue
+        ct = t.rows[r_idx].cells[CODE_COL].text.strip()
+        if ct.isdigit() and 1 <= int(ct) <= 20:
+            ban_to_row[int(ct)] = r_idx
+
+    for ban, r_idx in ban_to_row.items():
+        for ci in [NAME_COL, NOTE_COL]:
+            for para in t.rows[r_idx].cells[ci].paragraphs:
+                for run in para.runs: run.text = ''
+
+    for s in on_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    for s in off_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
+    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
+    gg_rows = find_section_rows(t, ONAME_COL, '公假')
+
+    for rows in [lx_rows, bx_rows, gg_rows]:
+        for r_idx in rows:
+            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
+            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+
+    for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
+        for j, s in enumerate(people):
+            if j >= len(rows): break
+            set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
+            set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
+
+    day = roc_date.split('年')[1].split('日')[0] + '日'
+    for cell in t.rows[0].cells:
+        if '民國' in cell.text and '年' in cell.text:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    if '年月日【' in run.text:
+                        run.text = f'年{day}【'
+                    elif run.text == '星期':
+                        run.text = f'星期{weekday}'
+            break
+
+    if sake_times and has_sake:
+        time_to_row = {}
+        for r_idx in range(len(t.rows)):
+            row = t.rows[r_idx]
+            if not row.cells: continue
+            cell_txt = row.cells[0].text.strip()
+            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
+            if m:
+                h = int(m.group(1))
+                time_to_row[h] = r_idx
+
+        for st in sake_times:
+            s_h = int(st['start'])
+            e_h = int(st['end'])
+            hours = []
+            h = s_h
+            while True:
+                hours.append(h % 24)
+                h += 1
+                if h % 24 == e_h % 24: break
+                if len(hours) > 16: break
+            for h in hours:
+                if h in time_to_row:
+                    set_red_border(t.rows[time_to_row[h]])
+
+    blank_manual_duty_codes(doc)
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── API ──────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/staff', methods=['GET'])
+def get_staff():
+    if not SUPABASE_URL: return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
+
+@app.route('/api/staff', methods=['POST'])
+def add_staff():
+    return jsonify(sb_post('staff', request.json))
+
+@app.route('/api/staff/<int:code>', methods=['PUT'])
+def update_staff(code):
+    return jsonify(sb_patch('staff', 'code', code, request.json))
+
+@app.route('/api/staff/<int:code>', methods=['DELETE'])
+def delete_staff(code):
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
+
+@app.route('/api/parse-excel', methods=['POST'])
+def parse_excel_api():
+    f = request.files.get('file')
+    if not f: return jsonify({'error': '未上傳檔案'}), 400
+    try:
+        result = parse_excel(f.read())
+        # 自動存到 Supabase
+        saved = save_to_supabase(result['monthlyData'])
+        result['savedDays'] = saved
+        # 回傳新人員名單（前端確認後再同步）
+        new_staff = sync_staff(result['staffFromExcel'])
+        result['newStaff'] = new_staff
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/duty/<date_str>', methods=['GET'])
+def get_duty(date_str):
+    """從 Supabase 取特定日期的勤務資料"""
+    if not SUPABASE_URL: return jsonify(None)
+    data = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if data and len(data) > 0:
+        d = data[0]
+        return jsonify({
+            'rocDate': d['roc_date'],
+            'weekday': d['weekday'],
+            'isHoliday': d['is_holiday'],
+            'hasSake': d['has_sake'],
+            'sakeTimes': d['sake_times'],
+            'onDuty': d['on_duty'],
+            'offDuty': d['off_duty'],
+        })
+    return jsonify(None)
+
+@app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    zip_buf = io.BytesIO()
+    failures = []
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except Exception as exc:
+                failures.append({'date': d.get('rocDate', ''), 'error': str(exc)})
+    if failures:
+        return jsonify({'error': '部分日期產生失敗，未提供不完整的壓縮檔', 'failures': failures}), 422
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or not tmpl_type:
+        return jsonify({'error': '缺少參數'}), 400
+    name_map = {
+        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
+        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
+    }
+    fname = name_map.get(tmpl_type)
+    if not fname: return jsonify({'error': '無效類型'}), 400
+    os.makedirs(ASSETS, exist_ok=True)
+    f.save(os.path.join(ASSETS, fname))
+    return jsonify({'ok': True})
+
+if __name__ == '__main__':
+    app.run(debug=True))
+    combined_pattern = re.compile(r'^\\d{3,4}
+    on_duty  = data['onDuty']
+    off_duty = data['offDuty']
+    roc_date = data['rocDate']
+    weekday  = data['weekday']
+    is_holiday = data['isHoliday']
+    has_sake   = data.get('hasSake', False)
+    sake_times = data.get('sakeTimes', [])
+
+    tmpl_path = get_tmpl(is_holiday, has_sake)
+    if not os.path.exists(tmpl_path):
+        raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
+
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+
+    lx, bx, gg = [], [], []
+    for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
+        st = s.get('status') or ''
+        if st == '輪': lx.append(s)
+        elif st in ['優','休','補']: bx.append(s)
+        elif st == '公': gg.append(s)
+
+    doc = Document(tmpl_path)
+    t = doc.tables[0]
+
+    ban_to_row = {}
+    for r_idx in range(4, len(t.rows)):
+        if CODE_COL >= len(t.rows[r_idx].cells): continue
+        ct = t.rows[r_idx].cells[CODE_COL].text.strip()
+        if ct.isdigit() and 1 <= int(ct) <= 20:
+            ban_to_row[int(ct)] = r_idx
+
+    for ban, r_idx in ban_to_row.items():
+        for ci in [NAME_COL, NOTE_COL]:
+            for para in t.rows[r_idx].cells[ci].paragraphs:
+                for run in para.runs: run.text = ''
+
+    for s in on_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    for s in off_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
+    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
+    gg_rows = find_section_rows(t, ONAME_COL, '公假')
+
+    for rows in [lx_rows, bx_rows, gg_rows]:
+        for r_idx in rows:
+            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
+            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+
+    for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
+        for j, s in enumerate(people):
+            if j >= len(rows): break
+            set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
+            set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
+
+    day = roc_date.split('年')[1].split('日')[0] + '日'
+    for cell in t.rows[0].cells:
+        if '民國' in cell.text and '年' in cell.text:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    if '年月日【' in run.text:
+                        run.text = f'年{day}【'
+                    elif run.text == '星期':
+                        run.text = f'星期{weekday}'
+            break
+
+    if sake_times and has_sake:
+        time_to_row = {}
+        for r_idx in range(len(t.rows)):
+            row = t.rows[r_idx]
+            if not row.cells: continue
+            cell_txt = row.cells[0].text.strip()
+            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
+            if m:
+                h = int(m.group(1))
+                time_to_row[h] = r_idx
+
+        for st in sake_times:
+            s_h = int(st['start'])
+            e_h = int(st['end'])
+            hours = []
+            h = s_h
+            while True:
+                hours.append(h % 24)
+                h += 1
+                if h % 24 == e_h % 24: break
+                if len(hours) > 16: break
+            for h in hours:
+                if h in time_to_row:
+                    set_red_border(t.rows[time_to_row[h]])
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── API ──────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/staff', methods=['GET'])
+def get_staff():
+    if not SUPABASE_URL: return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
+
+@app.route('/api/staff', methods=['POST'])
+def add_staff():
+    return jsonify(sb_post('staff', request.json))
+
+@app.route('/api/staff/<int:code>', methods=['PUT'])
+def update_staff(code):
+    return jsonify(sb_patch('staff', 'code', code, request.json))
+
+@app.route('/api/staff/<int:code>', methods=['DELETE'])
+def delete_staff(code):
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
+
+@app.route('/api/parse-excel', methods=['POST'])
+def parse_excel_api():
+    f = request.files.get('file')
+    if not f: return jsonify({'error': '未上傳檔案'}), 400
+    try:
+        result = parse_excel(f.read())
+        # 自動存到 Supabase
+        saved = save_to_supabase(result['monthlyData'])
+        result['savedDays'] = saved
+        # 回傳新人員名單（前端確認後再同步）
+        new_staff = sync_staff(result['staffFromExcel'])
+        result['newStaff'] = new_staff
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/duty/<date_str>', methods=['GET'])
+def get_duty(date_str):
+    """從 Supabase 取特定日期的勤務資料"""
+    if not SUPABASE_URL: return jsonify(None)
+    data = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if data and len(data) > 0:
+        d = data[0]
+        return jsonify({
+            'rocDate': d['roc_date'],
+            'weekday': d['weekday'],
+            'isHoliday': d['is_holiday'],
+            'hasSake': d['has_sake'],
+            'sakeTimes': d['sake_times'],
+            'onDuty': d['on_duty'],
+            'offDuty': d['off_duty'],
+        })
+    return jsonify(None)
+
+@app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    zip_buf = io.BytesIO()
+    failures = []
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except Exception as exc:
+                failures.append({'date': d.get('rocDate', ''), 'error': str(exc)})
+    if failures:
+        return jsonify({'error': '部分日期產生失敗，未提供不完整的壓縮檔', 'failures': failures}), 422
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or not tmpl_type:
+        return jsonify({'error': '缺少參數'}), 400
+    name_map = {
+        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
+        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
+    }
+    fname = name_map.get(tmpl_type)
+    if not fname: return jsonify({'error': '無效類型'}), 400
+    os.makedirs(ASSETS, exist_ok=True)
+    f.save(os.path.join(ASSETS, fname))
+    return jsonify({'ok': True})
+
+if __name__ == '__main__':
+    app.run(debug=True))
+    vehicle_pattern = re.compile(r'^(?:\\d{3,}|[A-Z]{2,}-?\\d{3,})
+    on_duty  = data['onDuty']
+    off_duty = data['offDuty']
+    roc_date = data['rocDate']
+    weekday  = data['weekday']
+    is_holiday = data['isHoliday']
+    has_sake   = data.get('hasSake', False)
+    sake_times = data.get('sakeTimes', [])
+
+    tmpl_path = get_tmpl(is_holiday, has_sake)
+    if not os.path.exists(tmpl_path):
+        raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
+
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+
+    lx, bx, gg = [], [], []
+    for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
+        st = s.get('status') or ''
+        if st == '輪': lx.append(s)
+        elif st in ['優','休','補']: bx.append(s)
+        elif st == '公': gg.append(s)
+
+    doc = Document(tmpl_path)
+    t = doc.tables[0]
+
+    ban_to_row = {}
+    for r_idx in range(4, len(t.rows)):
+        if CODE_COL >= len(t.rows[r_idx].cells): continue
+        ct = t.rows[r_idx].cells[CODE_COL].text.strip()
+        if ct.isdigit() and 1 <= int(ct) <= 20:
+            ban_to_row[int(ct)] = r_idx
+
+    for ban, r_idx in ban_to_row.items():
+        for ci in [NAME_COL, NOTE_COL]:
+            for para in t.rows[r_idx].cells[ci].paragraphs:
+                for run in para.runs: run.text = ''
+
+    for s in on_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    for s in off_duty:
+        ban = s.get('ban')
+        if not ban or ban not in ban_to_row: continue
+        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
+        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+
+    lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
+    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
+    gg_rows = find_section_rows(t, ONAME_COL, '公假')
+
+    for rows in [lx_rows, bx_rows, gg_rows]:
+        for r_idx in rows:
+            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
+            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+
+    for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
+        for j, s in enumerate(people):
+            if j >= len(rows): break
+            set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
+            set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
+
+    day = roc_date.split('年')[1].split('日')[0] + '日'
+    for cell in t.rows[0].cells:
+        if '民國' in cell.text and '年' in cell.text:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    if '年月日【' in run.text:
+                        run.text = f'年{day}【'
+                    elif run.text == '星期':
+                        run.text = f'星期{weekday}'
+            break
+
+    if sake_times and has_sake:
+        time_to_row = {}
+        for r_idx in range(len(t.rows)):
+            row = t.rows[r_idx]
+            if not row.cells: continue
+            cell_txt = row.cells[0].text.strip()
+            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
+            if m:
+                h = int(m.group(1))
+                time_to_row[h] = r_idx
+
+        for st in sake_times:
+            s_h = int(st['start'])
+            e_h = int(st['end'])
+            hours = []
+            h = s_h
+            while True:
+                hours.append(h % 24)
+                h += 1
+                if h % 24 == e_h % 24: break
+                if len(hours) > 16: break
+            for h in hours:
+                if h in time_to_row:
+                    set_red_border(t.rows[time_to_row[h]])
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── API ──────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/staff', methods=['GET'])
+def get_staff():
+    if not SUPABASE_URL: return jsonify([])
+    data = sb_get('staff', params={'order': 'code'})
+    return jsonify(data)
+
+@app.route('/api/staff', methods=['POST'])
+def add_staff():
+    return jsonify(sb_post('staff', request.json))
+
+@app.route('/api/staff/<int:code>', methods=['PUT'])
+def update_staff(code):
+    return jsonify(sb_patch('staff', 'code', code, request.json))
+
+@app.route('/api/staff/<int:code>', methods=['DELETE'])
+def delete_staff(code):
+    sb_delete('staff', 'code', code)
+    return jsonify({'ok': True})
+
+@app.route('/api/parse-excel', methods=['POST'])
+def parse_excel_api():
+    f = request.files.get('file')
+    if not f: return jsonify({'error': '未上傳檔案'}), 400
+    try:
+        result = parse_excel(f.read())
+        # 自動存到 Supabase
+        saved = save_to_supabase(result['monthlyData'])
+        result['savedDays'] = saved
+        # 回傳新人員名單（前端確認後再同步）
+        new_staff = sync_staff(result['staffFromExcel'])
+        result['newStaff'] = new_staff
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/duty/<date_str>', methods=['GET'])
+def get_duty(date_str):
+    """從 Supabase 取特定日期的勤務資料"""
+    if not SUPABASE_URL: return jsonify(None)
+    data = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if data and len(data) > 0:
+        d = data[0]
+        return jsonify({
+            'rocDate': d['roc_date'],
+            'weekday': d['weekday'],
+            'isHoliday': d['is_holiday'],
+            'hasSake': d['has_sake'],
+            'sakeTimes': d['sake_times'],
+            'onDuty': d['on_duty'],
+            'offDuty': d['off_duty'],
+        })
+    return jsonify(None)
+
+@app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    zip_buf = io.BytesIO()
+    failures = []
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except Exception as exc:
+                failures.append({'date': d.get('rocDate', ''), 'error': str(exc)})
+    if failures:
+        return jsonify({'error': '部分日期產生失敗，未提供不完整的壓縮檔', 'failures': failures}), 422
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or not tmpl_type:
+        return jsonify({'error': '缺少參數'}), 400
+    name_map = {
+        '平日':'tmpl_平日.docx','假日':'tmpl_假日.docx',
+        '平日取酒':'tmpl_平日取酒.docx','假日取酒':'tmpl_假日取酒.docx'
+    }
+    fname = name_map.get(tmpl_type)
+    if not fname: return jsonify({'error': '無效類型'}), 400
+    os.makedirs(ASSETS, exist_ok=True)
+    f.save(os.path.join(ASSETS, fname))
+    return jsonify({'ok': True})
+
+if __name__ == '__main__':
+    app.run(debug=True))
+    boundary = width - 5
+    ambiguous = []
+    for row_index, tr in enumerate(table._tbl.tr_lst):
+        if not 15 <= row_index <= 62:
+            continue
+        col = 0
+        for tc in tr.tc_lst:
+            span = tc.tcPr.gridSpan if tc.tcPr is not None else None
+            n = int(span.val) if span is not None else 1
+            start = col
+            col += n
+            if start == 0 or start >= boundary or col > boundary:
+                continue
+            nodes = list(tc.iter(qn('w:t')))
+            value = ''.join(node.text or '' for node in nodes).strip()
+            if not value:
+                continue
+            is_combined = (width == 37 and row_index <= 39
+                           and start not in (4, 5, 6, 7)
+                           and combined_pattern.fullmatch(value))
+            if vehicle_pattern.fullmatch(value) and not is_combined:
+                continue
+            if staff_pattern.fullmatch(value) or is_combined:
+                for node in nodes:
+                    node.text = ''
+            elif re.search(r'\\d', value):
+                ambiguous.append((row_index, start, value[:80]))
+    if ambiguous:
+        raise ValueError(f'勤務區含無法安全判斷的數字：{ambiguous[:10]}')
+
+
 def generate_word(data):
     on_duty  = data['onDuty']
     off_duty = data['offDuty']
