@@ -273,22 +273,34 @@ def parse_excel(file_bytes):
         }
 
     # ── 全隊大表：主管督勤欄（依職稱，不依外勤姓名） ──
-    supervisor_codes = {
-        '隊長': (63, '張瑞忠'),
-        '林副隊長': (62, '林志明'),
-        '陳副隊長': (61, '陳彥文'),
-        '李秘書': (60, '李安景'),
-        '姚組長': (35, '姚宗志'),
-        '翁組長': (43, '翁水成'),
-    }
+    # Excel's fixed roster (BQ:BS) is authoritative for internal code/name.
+    supervisor_titles = ('隊長', '林副隊長', '陳副隊長', '李秘書', '姚組長', '翁組長')
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
+        fixed_staff = {}
+        for roster_row in range(1, ws_all.max_row + 1):
+            code_val = ws_all.cell(roster_row, 69).value  # BQ
+            name_val = ws_all.cell(roster_row, 71).value  # BS
+            try:
+                code = int(code_val)
+            except (TypeError, ValueError):
+                continue
+            name = str(name_val or '').strip()
+            if 21 <= code <= 99 and 2 <= len(name) <= 5:
+                fixed_staff[name] = code
+        # Resolve supervisor titles through their Excel roster names.
+        # Titles without a verified name-to-code mapping are skipped safely.
+        supervisor_names = {
+            '隊長': '張瑞忠', '林副隊長': '林志明',
+            '陳副隊長': '陳彥文', '李秘書': '李安景',
+            '姚組長': '姚宗志', '翁組長': '翁水成',
+        }
         # Find the supervisor headers in the top rows; do not assume fixed columns.
         supervisor_cols = {}
         for header_row in range(1, min(ws_all.max_row, 12) + 1):
             for col in range(1, ws_all.max_column + 1):
                 label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\n', '')
-                if label in supervisor_codes:
+                if label in supervisor_titles:
                     supervisor_cols[label] = col
 
         for row in range(3, ws_all.max_row + 1):
@@ -319,7 +331,10 @@ def parse_excel(file_bytes):
                 raw = str(ws_all.cell(row, col).value or '').strip()
                 if not raw:
                     continue
-                code, name = supervisor_codes[title]
+                name = supervisor_names[title]
+                code = fixed_staff.get(name)
+                if code is None:
+                    continue
                 status = ''
                 if '輪休' in raw or raw == '輪':
                     status = '輪休'
