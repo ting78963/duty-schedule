@@ -479,6 +479,23 @@ def generate_word(data):
         if ct.isdigit() and 1 <= int(ct) <= 63:
             ban_to_row[int(ct)] = r_idx
 
+    roster = sb_get('staff', params={'select': 'code,name', 'order': 'code'})
+    if not isinstance(roster, list) or not roster:
+        raise RuntimeError('人員名冊讀取失敗')
+    names_by_code = {}
+    for entry in roster:
+        try:
+            code = int(entry.get('code'))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= code <= 63:
+            names_by_code[code] = str(entry.get('name') or '').strip()
+    for code, row_index in ban_to_row.items():
+        name_cell = row_cells[row_index][NAME_COL]
+        name = names_by_code.get(code, '')
+        if name_cell.text.strip() != name:
+            set_cell(name_cell, name)
+
     # Keep existing names and formatting. Only replace a name when the Excel
     # record explicitly supplies a valid numbered staff member.
     for person in list(on_duty) + list(off_duty):
@@ -488,8 +505,8 @@ def generate_word(data):
             continue
         row = row_cells[ban_to_row[ban]]
         # Excel is authoritative for numbered staff names; Word is layout only.
-        if row[NAME_COL].text.strip() != name:
-            set_cell(row[NAME_COL], name)
+        if names_by_code.get(ban) != name:
+            continue
         status = person.get('status') or ''
         # Do not overwrite permanent remarks such as 內部管理 on ordinary days.
         if isinstance(ban, int) and ban >= 21:
