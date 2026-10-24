@@ -144,8 +144,8 @@ def set_cell(cell, text, size=None, color='000000'):
             return
     cell.paragraphs[0].add_run(text)
 
-def set_red_border(row):
-    for cell in row.cells:
+def set_red_border_cells(cells):
+    for cell in cells:
         tc = cell._tc
         tcPr = tc.find(f'{{{ns}}}tcPr')
         if tcPr is None:
@@ -342,7 +342,7 @@ def generate_word(data):
     # Supabase is the authoritative template store. A local bundled copy is optional.
     # template_bytes() handles the Storage lookup and local fallback.
 
-    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
+    # Column mapping is resolved after loading the document.
 
     lx, bx, gg = [], [], []
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
@@ -353,6 +353,9 @@ def generate_word(data):
 
     doc = Document(io.BytesIO(template_bytes(tmpl_path)))
     t = doc.tables[0]
+    # Column positions depend on the actual approved template, not the day type.
+    # Both 35-column and 37-column approved layouts are supported.
+    CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = (len(t.columns)-5, len(t.columns)-4, len(t.columns)-3, len(t.columns)-2, len(t.columns)-1)
     # Resolve each complex merged row only once instead of dozens of times.
     row_cells = [row.cells for row in t.rows]
 
@@ -363,22 +366,19 @@ def generate_word(data):
         if ct.isdigit() and 1 <= int(ct) <= 20:
             ban_to_row[int(ct)] = r_idx
 
-    for ban, r_idx in ban_to_row.items():
-        for ci in [NAME_COL, NOTE_COL]:
-            for para in row_cells[r_idx][ci].paragraphs:
-                for run in para.runs: run.text = ''
-
-    for s in on_duty:
-        ban = s.get('ban')
-        if not ban or ban not in ban_to_row: continue
-        set_cell(row_cells[ban_to_row[ban]][NAME_COL], s['name'])
-        set_cell(row_cells[ban_to_row[ban]][NOTE_COL], s.get('status') or '', size=24)
-
-    for s in off_duty:
-        ban = s.get('ban')
-        if not ban or ban not in ban_to_row: continue
-        set_cell(row_cells[ban_to_row[ban]][NAME_COL], s['name'])
-        set_cell(row_cells[ban_to_row[ban]][NOTE_COL], s.get('status') or '', size=24)
+    # Keep existing names and formatting. Only replace a name when the Excel
+    # record explicitly supplies a valid numbered staff member.
+    for person in list(on_duty) + list(off_duty):
+        ban = person.get('ban')
+        name = person.get('name')
+        if not isinstance(ban, int) or ban not in ban_to_row or not name:
+            continue
+        row = row_cells[ban_to_row[ban]]
+        if row[NAME_COL].text.strip() != name:
+            set_cell(row[NAME_COL], name)
+        status = person.get('status') or ''
+        if status and row[NOTE_COL].text.strip() != status:
+            set_cell(row[NOTE_COL], status)
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休', row_cells)
     bx_rows = find_section_rows(t, ONAME_COL, '休(補)假', row_cells)
@@ -392,7 +392,7 @@ def generate_word(data):
     for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
         for j, s in enumerate(people):
             if j >= len(rows): break
-            set_cell(row_cells[rows[j]][OCODE_COL], str(s.get('ban','')))
+            set_cell(row_cells[rows[j]][OCODE_COL], str(s['ban']) if isinstance(s.get('ban'), int) else '')
             set_cell(row_cells[rows[j]][ONAME_COL], s['name'])
 
     day = roc_date.split('年')[1].split('日')[0] + '日'
@@ -429,7 +429,9 @@ def generate_word(data):
                 if len(hours) > 16: break
             for h in hours:
                 if h in time_to_row:
-                    set_red_border(t.rows[time_to_row[h]])
+                    # Do not draw borders across the personnel directory.
+                    for cell in row_cells[time_to_row[h]][:CODE_COL]:
+                        set_red_border_cells([cell])
 
     buf = io.BytesIO()
     doc.save(buf)
