@@ -1,0 +1,43 @@
+name: Word generation from private Storage regression
+on:
+  push:
+    branches: [fix/word-download-missing-local-template-20261024]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Generate Word with absent local template
+        run: |
+          python - <<'PY'
+          import io, os, zipfile
+          from unittest.mock import patch
+          import app
+          from docx import Document
+          from pathlib import Path
+          data={'rocDate':'115年11月10日','weekday':'二','isHoliday':False,'hasSake':True,'sakeTimes':[],'onDuty':[],'offDuty':[]}
+          payload=Path('assets/tmpl_平日取酒.docx').read_bytes() if Path('assets/tmpl_平日取酒.docx').exists() else None
+          assert payload is not None, 'QA template must be present'
+          with patch.object(app,'get_tmpl',return_value='/no-local-assets/tmpl_平日取酒.docx'), patch.object(app,'template_bytes',return_value=payload):
+              response=app.app.test_client().post('/api/generate',json=data)
+          assert response.status_code==200, response.data[:300]
+          assert zipfile.is_zipfile(io.BytesIO(response.data))
+          doc=Document(io.BytesIO(response.data))
+          assert doc.tables
+          print('DOCX generation from remote-only template passed')
+          PY
+      - name: Check browser error handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html=Path('templates/index.html').read_text()
+          start=html.index('async function generateOne(')
+          end=html.index('async function generateBatch(',start)
+          assert 'if (!res.ok)' in html[start:end]
+          assert 'throw new Error' in html[start:end]
+          print('Error response is not downloaded as DOCX')
+          PY
