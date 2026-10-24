@@ -1,7 +1,7 @@
 name: Word generation from private Storage regression
 on:
   push:
-    branches: [fix/word-download-missing-local-template-20261024]
+    branches: [fix/word-merged-cell-performance-20261024]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,7 +17,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python - <<'PY'
-          import io, os, zipfile
+          import io, os, zipfile, time
           from unittest.mock import patch
           import app
           from docx import Document
@@ -30,12 +30,24 @@ jobs:
           assert response.status_code==200, 'Unable to read private approved QA template: HTTP '+str(response.status_code)
           payload=response.content
           assert zipfile.is_zipfile(io.BytesIO(payload)), 'Private Storage template is not DOCX'
+          roster=requests.get(os.environ['SUPABASE_URL'].rstrip('/')+'/rest/v1/monthly_duty',headers={'apikey':key,'Authorization':'Bearer '+key},params={'date_str':'eq.115年11月10日','limit':'1'},timeout=25)
+          assert roster.status_code==200, roster.status_code
+          rows=roster.json()
+          assert len(rows)==1, 'Saved November 10 roster not found'
+          d=rows[0]
+          data={'rocDate':d['roc_date'],'weekday':d['weekday'],'isHoliday':d['is_holiday'],'hasSake':d['has_sake'],'sakeTimes':d['sake_times'],'onDuty':d['on_duty'],'offDuty':d['off_duty']}
+          assert len(data['onDuty'])+len(data['offDuty'])>=15
+          started=time.monotonic()
           with patch.object(app,'get_tmpl',return_value='/no-local-assets/tmpl_平日取酒.docx'), patch.object(app,'template_bytes',return_value=payload):
               response=app.app.test_client().post('/api/generate',json=data)
+          elapsed=time.monotonic()-started
+          print('Generation elapsed seconds:',round(elapsed,2),flush=True)
+          assert elapsed < 20, 'Generation too slow for production worker'
           assert response.status_code==200, response.data[:300]
           assert zipfile.is_zipfile(io.BytesIO(response.data))
           doc=Document(io.BytesIO(response.data))
           assert doc.tables
+          assert len(doc.tables[0].rows)>=25, 'Word table has too few rows'
           print('DOCX generation from remote-only template passed')
           PY
       - name: Check browser error handling
