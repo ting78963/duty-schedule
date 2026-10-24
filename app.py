@@ -687,8 +687,9 @@ def generate_batch():
                 buf = generate_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
-            except:
-                pass
+            except Exception as e:
+                # Never return a partial ZIP that silently omits failed dates.
+                return jsonify({'error': '批次產生失敗', 'date': d.get('rocDate', ''), 'detail': str(e)}), 500
     zip_buf.seek(0)
     return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
                     mimetype='application/zip')
