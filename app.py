@@ -251,12 +251,19 @@ def parse_excel(file_bytes):
             status = ''
             if status_val and str(status_val).strip():
                 raw = str(status_val).strip()
-                for s in ['輪','優','休','補','公']:
-                    if s in raw:
-                        status = s
-                        break
-                if not status:
-                    status = raw[:2]  # 常訓等備考
+                if '停休' in raw:
+                    status = '停休'
+                elif '公假' in raw:
+                    status = '公假'
+                elif any(k in raw for k in ['喪假','病假','事假','婚假','產假','陪產假','家庭照顧假','生理假','特休']):
+                    status = raw
+                else:
+                    for s in ['輪','優','休','補','公']:
+                        if s in raw:
+                            status = s
+                            break
+                    if not status:
+                        status = raw  # 保留其他假別及常訓等備考
 
             person = {'name': name, 'ban': ban, 'status': status}
             # Any kind of leave is off-duty; 停休 means leave was cancelled.
@@ -456,7 +463,7 @@ def generate_word(data):
             continue
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補']: bx.append(s)
+        elif st in ['優','休','補'] or ('假' in str(st) and '停休' not in str(st) and st != '公假'): bx.append(s)
         elif st == '公': gg.append(s)
 
     doc = Document(io.BytesIO(template_bytes(tmpl_path)))
@@ -499,6 +506,8 @@ def generate_word(data):
                 display_leave = '輪休'
             elif '休假' in leave_status:
                 display_leave = '休假'
+            elif '假' in leave_status and '停休' not in leave_status:
+                display_leave = leave_status
             else:
                 display_leave = ''
             if display_leave and row[NOTE_COL].text.strip() != display_leave:
