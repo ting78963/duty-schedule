@@ -12,6 +12,9 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - name: Generate Word with absent local template
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python - <<'PY'
           import io, os, zipfile
@@ -20,8 +23,13 @@ jobs:
           from docx import Document
           from pathlib import Path
           data={'rocDate':'115年11月10日','weekday':'二','isHoliday':False,'hasSake':True,'sakeTimes':[],'onDuty':[],'offDuty':[]}
-          payload=Path('assets/tmpl_平日取酒.docx').read_bytes() if Path('assets/tmpl_平日取酒.docx').exists() else None
-          assert payload is not None, 'QA template must be present'
+          import requests
+          url=os.environ['SUPABASE_URL'].rstrip('/') + '/storage/v1/object/authenticated/duty-templates/weekday_sake.docx'
+          key=os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          response=requests.get(url,headers={'apikey':key,'Authorization':'Bearer '+key},timeout=25)
+          assert response.status_code==200, 'Unable to read private approved QA template: HTTP '+str(response.status_code)
+          payload=response.content
+          assert zipfile.is_zipfile(io.BytesIO(payload)), 'Private Storage template is not DOCX'
           with patch.object(app,'get_tmpl',return_value='/no-local-assets/tmpl_平日取酒.docx'), patch.object(app,'template_bytes',return_value=payload):
               response=app.app.test_client().post('/api/generate',json=data)
           assert response.status_code==200, response.data[:300]
