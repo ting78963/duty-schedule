@@ -336,7 +336,14 @@ def parse_excel(file_bytes):
                 if not raw:
                     continue
                 name = supervisor_names[title]
+                # Verified supervisor code crosswalk supplied for this schedule.
+                # Excel remains authoritative for each day's duty/leave status.
+                verified_supervisor_codes = {
+                    '隊長': 63, '林副隊長': 62, '陳副隊長': 61,
+                }
                 code = fixed_staff.get(name)
+                if code is None:
+                    code = verified_supervisor_codes.get(title)
                 if code is None:
                     continue
                 status = ''
