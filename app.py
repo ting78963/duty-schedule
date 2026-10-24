@@ -287,7 +287,7 @@ def parse_excel(file_bytes):
         supervisor_cols = {}
         for header_row in range(1, min(ws_all.max_row, 12) + 1):
             for col in range(1, ws_all.max_column + 1):
-                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\\n', '')
+                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\n', '')
                 if label in supervisor_codes:
                     supervisor_cols[label] = col
 
@@ -431,7 +431,7 @@ def generate_word(data):
     for r_idx in range(4, len(t.rows)):
         if CODE_COL >= len(row_cells[r_idx]): continue
         ct = row_cells[r_idx][CODE_COL].text.strip()
-        if ct.isdigit() and 1 <= int(ct) <= 20:
+        if ct.isdigit() and 1 <= int(ct) <= 63:
             ban_to_row[int(ct)] = r_idx
 
     # Keep existing names and formatting. Only replace a name when the Excel
@@ -445,13 +445,13 @@ def generate_word(data):
         if row[NAME_COL].text.strip() != name:
             set_cell(row[NAME_COL], name)
         status = person.get('status') or ''
-        # Internal staff use their own note, not the right-hand leave directory.
-        # Clear outdated leave marks when the person is on duty today.
+        # Do not overwrite permanent remarks such as 內部管理 on ordinary days.
         if isinstance(ban, int) and ban >= 21:
-            status_text = {'輪': '輪休', '休': '休假', '優': '休假',
-                           '補': '休假', '公': '公假'}.get(status, status)
-            if row[NOTE_COL].text.strip() != status_text:
-                set_cell(row[NOTE_COL], status_text)
+            leave_status = {'輪': '輪休', '休': '休假', '優': '休假',
+                            '補': '休假', '公': '公假'}.get(status, status)
+            if leave_status in ('輪休', '休假', '公假'):
+                if row[NOTE_COL].text.strip() != leave_status:
+                    set_cell(row[NOTE_COL], leave_status)
         elif status and row[NOTE_COL].text.strip() != status:
             set_cell(row[NOTE_COL], status)
 
