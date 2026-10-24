@@ -324,11 +324,17 @@ def parse_excel(file_bytes):
                         day_number = int(date_val)
                     except (TypeError, ValueError):
                         continue
-                    candidates = [k for k in monthly_data if k.endswith(f'月{day_number}日')]
-                    if len(candidates) != 1:
+                    if 30000 <= day_number <= 80000:
+                        # Excel serial date (e.g. 46328 = 2026-11-02).
+                        date_obj = openpyxl.utils.datetime.from_excel(day_number, wb.epoch)
+                    elif 1 <= day_number <= 31:
+                        candidates = [k for k in monthly_data if k.endswith(f'月{day_number}日')]
+                        if len(candidates) != 1:
+                            continue
+                        date_str = candidates[0]
+                        date_obj = None
+                    else:
                         continue
-                    date_str = candidates[0]
-                    date_obj = None
             if date_obj is not None:
                 date_str = f'{date_obj.year - 1911}年{date_obj.month}月{date_obj.day}日'
             if date_str not in monthly_data:
