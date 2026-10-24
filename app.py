@@ -489,6 +489,94 @@ def get_duty(date_str):
         })
     return jsonify(None)
 
+@app.route('/api/duty-month/latest', methods=['GET'])
+def get_latest_duty_month():
+    """Return the most recently uploaded duty month from persisted Supabase rows."""
+    if not SUPABASE_URL:
+        return jsonify({'year': None, 'month': None, 'days': []})
+    recent = sb_get('monthly_duty', params={'select': 'date_str', 'order': 'created_at.desc,id.desc', 'limit': '1'})
+    if not recent:
+        return jsonify({'year': None, 'month': None, 'days': []})
+    match = re.match(r'^(\\d+)年(\\d+)月\\d+日
+def get_duty_month(year, month):
+    """取某月所有勤務資料（給月曆用）"""
+    if not SUPABASE_URL: return jsonify([])
+    prefix = f'{year}年{month}月'
+    data = sb_get('monthly_duty', params={
+        'date_str': f'like.{prefix}%',
+        'order': 'date_str'
+    })
+    return jsonify(data)
+
+@app.route('/api/generate', methods=['POST'])
+def generate_api():
+    data = request.json
+    try:
+        buf = generate_word(data)
+        fname = f'勤務表_{data.get("rocDate","")}.docx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/generate-batch', methods=['POST'])
+def generate_batch():
+    days_data = request.json
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w') as zf:
+        for d in days_data:
+            try:
+                buf = generate_word(d)
+                fname = f"勤務表_{d.get('rocDate','')}.docx"
+                zf.writestr(fname, buf.read())
+            except:
+                pass
+    zip_buf.seek(0)
+    return send_file(zip_buf, as_attachment=True, download_name='勤務表批次.zip',
+                    mimetype='application/zip')
+
+@app.route('/api/upload-template', methods=['POST'])
+def upload_template():
+    tmpl_type = request.form.get('type')
+    f = request.files.get('file')
+    if not f or tmpl_type not in TEMPLATE_NAMES:
+        return jsonify({'error': '請選擇正確的範本類型與Word檔案'}), 400
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({'error': '尚未設定永久儲存服務，未執行上傳'}), 503
+    expected_token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
+    supplied_token = request.headers.get('X-Template-Upload-Token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return jsonify({'error': '範本上傳未授權，請輸入管理密碼'}), 403
+    try:
+        payload = f.read(5 * 1024 * 1024 + 1)
+        validate_template_bytes(payload)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 400
+    name = TEMPLATE_NAMES[tmpl_type]
+    storage_name = TEMPLATE_STORAGE_NAMES.get(name, name)
+    url = f"{SUPABASE_URL}/storage/v1/object/{TEMPLATE_BUCKET}/{storage_name}"
+    headers = {'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
+               'Content-Type': DOCX_MIME, 'x-upsert': 'true',
+               'Cache-Control': 'no-cache'}
+    try:
+        result = req.post(url, headers=headers, data=payload, timeout=30)
+        if result.status_code not in (200, 201):
+            return jsonify({'error': f'永久儲存失敗 HTTP {result.status_code}'}), 502
+        saved = template_bytes(os.path.join(ASSETS, name))
+        if saved != payload:
+            return jsonify({'error': '儲存後內容驗證失敗'}), 502
+    except Exception as exc:
+        return jsonify({'error': f'範本儲存或驗證失敗：{exc}'}), 502
+    return jsonify({'ok': True, 'type': tmpl_type, 'persistent': True})
+
+if __name__ == '__main__':
+    app.run(debug=True), recent[0].get('date_str', ''))
+    if not match:
+        return jsonify({'error': '儲存的勤務日期格式不正確'}), 500
+    year, month = map(int, match.groups())
+    rows = sb_get('monthly_duty', params={'date_str': f'like.{year}年{month}月%', 'order': 'id'})
+    return jsonify({'year': year, 'month': month, 'days': rows})
+
 @app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
 def get_duty_month(year, month):
     """取某月所有勤務資料（給月曆用）"""
