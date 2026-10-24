@@ -277,7 +277,7 @@ def parse_excel(file_bytes):
         '隊長': (63, '張瑞忠'),
         '林副隊長': (62, '林志明'),
         '陳副隊長': (61, '陳彥文'),
-        '李秘書': (60, '李安景'),
+        # 李秘書的番號/姓名與已驗收 Word 不一致，未核實前不可自動對應。
         '姚組長': (35, '姚宗志'),
         '翁組長': (43, '翁水成'),
     }
@@ -442,7 +442,9 @@ def generate_word(data):
         if not isinstance(ban, int) or ban not in ban_to_row or not name:
             continue
         row = row_cells[ban_to_row[ban]]
-        if row[NAME_COL].text.strip() != name:
+        # Preserve the approved internal roster; never replace internal names
+        # based on a title-to-code guess.
+        if ban <= 20 and row[NAME_COL].text.strip() != name:
             set_cell(row[NAME_COL], name)
         status = person.get('status') or ''
         # Do not overwrite permanent remarks such as 內部管理 on ordinary days.
