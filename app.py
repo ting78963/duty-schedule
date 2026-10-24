@@ -335,8 +335,8 @@ def generate_word(data):
     sake_times = data.get('sakeTimes', [])
 
     tmpl_path = get_tmpl(is_holiday, has_sake)
-    if not os.path.exists(tmpl_path):
-        raise FileNotFoundError(f'模板不存在: {tmpl_path}，請先上傳模板')
+    # Supabase is the authoritative template store. A local bundled copy is optional.
+    # template_bytes() handles the Storage lookup and local fallback.
 
     CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = get_cols(is_holiday)
 
