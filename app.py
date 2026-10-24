@@ -283,6 +283,22 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
+    # Read the fixed code/name directory (BQ:BS) on every upload.
+    # Blank named positions are meaningful; unnumbered newcomers are excluded.
+    fixed_roster = {}
+    if '全隊大表' in wb.sheetnames:
+        roster_sheet = wb['全隊大表']
+        for rr in range(1, roster_sheet.max_row + 1):
+            code_raw = roster_sheet.cell(rr, 69).value
+            if not str(code_raw or '').strip().isdigit():
+                continue
+            code = int(code_raw)
+            if 21 <= code <= 54:
+                raw_name = roster_sheet.cell(rr, 71).value
+                fixed_roster[code] = str(raw_name or '').strip()
+    # The workbook does not define the supervisor/secretary 60-63 mapping.
+    # Keep those separately verified records, never infer them from row order.
+
     # ── 全隊大表：主管督勤欄（依職稱，不依外勤姓名） ──
     # Excel's fixed roster (BQ:BS) is authoritative for internal code/name.
     supervisor_titles = ('隊長', '林副隊長', '陳副隊長', '李秘書', '姚組長', '翁組長')
@@ -404,6 +420,7 @@ def parse_excel(file_bytes):
     return {
         'monthlyData': monthly_data,
         'staffFromExcel': list(staff_from_excel.keys()),
+        'fixedRoster': fixed_roster,
         'sakeByDate': sake_by_date,
         'totalDays': len(monthly_data)
     }
@@ -436,6 +453,26 @@ def sync_staff(staff_names):
     existing_names = {s['name'] for s in existing if s.get('name')}
     new_names = [n for n in staff_names if n not in existing_names]
     return new_names  # 回傳新人員名單讓前端確認
+
+def sync_fixed_roster(fixed_roster):
+    """Synchronize only fixed positions explicitly numbered in the uploaded Excel."""
+    if not fixed_roster:
+        raise RuntimeError('全隊大表沒有可核對的固定番號名冊')
+    existing = sb_get('staff', params={'select': 'code,name', 'order': 'code'})
+    if not isinstance(existing, list):
+        raise RuntimeError('資料庫名冊讀取失敗，拒絕同步')
+    by_code = {int(item['code']): item for item in existing if str(item.get('code', '')).isdigit()}
+    changed = []
+    for code, name in fixed_roster.items():
+        code = int(code)
+        if code not in by_code:
+            raise RuntimeError(f'資料庫缺少固定番號 {code}，停止同步')
+        if str(by_code[code].get('name') or '').strip() != name:
+            response = sb_patch('staff', 'code', code, {'name': name})
+            if not isinstance(response, list) or len(response) != 1:
+                raise RuntimeError(f'固定番號 {code} 更新未確認')
+            changed.append(code)
+    return changed
 
 def generate_word(data):
     on_duty  = data['onDuty']
@@ -479,6 +516,14 @@ def generate_word(data):
         if ct.isdigit() and 1 <= int(ct) <= 63:
             ban_to_row[int(ct)] = r_idx
 
+    # The approved layout leaves the secretary row blank: populate code 60
+    # in that existing row without changing the original stored template.
+    if 60 not in ban_to_row and 61 in ban_to_row:
+        secretary_row = ban_to_row[61] - 1
+        if secretary_row >= 4 and not row_cells[secretary_row][CODE_COL].text.strip():
+            set_cell(row_cells[secretary_row][CODE_COL], '60')
+            ban_to_row[60] = secretary_row
+
     roster = sb_get('staff', params={'select': 'code,name', 'order': 'code'})
     if not isinstance(roster, list) or not roster:
         raise RuntimeError('人員名冊讀取失敗')
@@ -490,9 +535,15 @@ def generate_word(data):
             continue
         if 1 <= code <= 63:
             names_by_code[code] = str(entry.get('name') or '').strip()
+    # External personnel use the Excel daily number, which rotates.
+    daily_external = {}
+    for person in list(on_duty) + list(off_duty):
+        code = person.get('ban')
+        if isinstance(code, int) and 1 <= code <= 20 and person.get('name'):
+            daily_external[code] = str(person['name']).strip()
     for code, row_index in ban_to_row.items():
         name_cell = row_cells[row_index][NAME_COL]
-        name = names_by_code.get(code, '')
+        name = daily_external.get(code, '') if code <= 20 else names_by_code.get(code, '')
         if name_cell.text.strip() != name:
             set_cell(name_cell, name)
 
@@ -505,7 +556,7 @@ def generate_word(data):
             continue
         row = row_cells[ban_to_row[ban]]
         # Excel is authoritative for numbered staff names; Word is layout only.
-        if names_by_code.get(ban) != name:
+        if ban >= 21 and names_by_code.get(ban) != name:
             continue
         status = person.get('status') or ''
         # Do not overwrite permanent remarks such as 內部管理 on ordinary days.
@@ -623,6 +674,9 @@ def parse_excel_api():
     if not f: return jsonify({'error': '未上傳檔案'}), 400
     try:
         result = parse_excel(f.read())
+        # Sync authoritative fixed roster before publishing daily schedules.
+        changed_codes = sync_fixed_roster(result['fixedRoster'])
+        result['rosterUpdatedCodes'] = changed_codes
         # 自動存到 Supabase
         saved = save_to_supabase(result['monthlyData'])
         result['savedDays'] = saved
