@@ -1,7 +1,7 @@
 name: Word generation from private Storage regression
 on:
   push:
-    branches: [fix/word-download-missing-local-template-20261024]
+    branches: [fix/word-merged-cell-performance-20261024]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,7 +17,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python - <<'PY'
-          import io, os, zipfile
+          import io, os, zipfile, time
           from unittest.mock import patch
           import app
           from docx import Document
@@ -30,8 +30,12 @@ jobs:
           assert response.status_code==200, 'Unable to read private approved QA template: HTTP '+str(response.status_code)
           payload=response.content
           assert zipfile.is_zipfile(io.BytesIO(payload)), 'Private Storage template is not DOCX'
+          started=time.monotonic()
           with patch.object(app,'get_tmpl',return_value='/no-local-assets/tmpl_平日取酒.docx'), patch.object(app,'template_bytes',return_value=payload):
               response=app.app.test_client().post('/api/generate',json=data)
+          elapsed=time.monotonic()-started
+          print('Generation elapsed seconds:',round(elapsed,2),flush=True)
+          assert elapsed < 20, 'Generation too slow for production worker'
           assert response.status_code==200, response.data[:300]
           assert zipfile.is_zipfile(io.BytesIO(response.data))
           doc=Document(io.BytesIO(response.data))
