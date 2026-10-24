@@ -489,9 +489,17 @@ def generate_word(data):
                             '補': '休假', '公': '公假'}.get(status, status)
             # Preserve Excel's full leave text, including partial-day and mixed leave.
             # E.g. 8-12公假 13-17休假 must not be reduced to a single category.
-            if any(token in leave_status for token in ('輪休', '休假', '公假')):
-                if row[NOTE_COL].text.strip() != leave_status:
-                    set_cell(row[NOTE_COL], leave_status)
+            # For mixed leave types, display public leave first as the priority.
+            if '公假' in leave_status:
+                display_leave = '公假'
+            elif '輪休' in leave_status:
+                display_leave = '輪休'
+            elif '休假' in leave_status:
+                display_leave = '休假'
+            else:
+                display_leave = ''
+            if display_leave and row[NOTE_COL].text.strip() != display_leave:
+                set_cell(row[NOTE_COL], display_leave)
         elif status and row[NOTE_COL].text.strip() != status:
             set_cell(row[NOTE_COL], status)
 
