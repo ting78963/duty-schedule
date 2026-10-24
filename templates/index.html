@@ -267,14 +267,17 @@ async function uploadExcel(input) {
     const tbody = document.getElementById('sake-table-body');
     tbody.innerHTML = '';
     Object.entries(sakeByDate).forEach(([date, time]) => {
-      const [s,e] = time.split('-');
-      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${s}:00 – ${e}:00</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
+      const range = typeof time === 'string' ? time : (time && typeof time === 'object' ? `${time.start}-${time.end}` : '');
+      const [s,e] = range.split('-');
+      const display = s !== undefined && e !== undefined ? `${s}:00 – ${e}:00` : '未提供時段';
+      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${display}</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
     });
     document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
     document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
     renderCal();
   } catch(e) {
-    zone.innerHTML = '<div style="color:var(--red)">解析失敗，請確認檔案格式</div>';
+    console.error('Excel upload/display failed:', e);
+    zone.innerHTML = '<div style="color:var(--red)">處理資料時發生錯誤，請回報管理員</div>';
   }
 }
 
