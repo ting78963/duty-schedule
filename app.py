@@ -24,7 +24,10 @@ def sb_get(table, params=None):
 def sb_post(table, data):
     headers = sb_headers()
     headers['Prefer'] = 'resolution=merge-duplicates,return=representation'
-    r = req.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, json=data)
+    params = {'on_conflict': 'date_str'} if table == 'monthly_duty' else None
+    r = req.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, params=params, json=data, timeout=30)
+    if not r.ok:
+        raise RuntimeError(f'Supabase {table} 寫入失敗 HTTP {r.status_code}: {r.text[:300]}')
     return r.json()
 
 def sb_patch(table, match_key, match_val, data):
