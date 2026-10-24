@@ -1,0 +1,40 @@
+name: Saved month bootstrap checks
+on:
+  push:
+    branches: [fix/load-saved-duty-month-20261024]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Test latest month API with mocked Supabase
+        run: |
+          python - <<'PY'
+          from unittest.mock import patch
+          import app
+          rows=[{'date_str':'115年11月1日','roc_date':'115年11月1日','weekday':'日','is_holiday':True,'has_sake':False,'sake_times':[],'on_duty':[],'off_duty':[]}]
+          def mock_get(table,params):
+              if params.get('limit')=='1':return [{'date_str':'115年11月30日'}]
+              if params.get('date_str')=='like.115年11月%':return rows
+              raise AssertionError(params)
+          with patch.object(app,'SUPABASE_URL','https://example.supabase.co'),patch.object(app,'sb_get',side_effect=mock_get):
+              res=app.app.test_client().get('/api/duty-month/latest')
+              assert res.status_code==200, res.data
+              d=res.get_json()
+              assert (d['year'],d['month'],len(d['days']))==(115,11,1),d
+          print('Latest persisted month endpoint passed')
+          PY
+      - name: Check browser bootstrap script
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html=Path('templates/index.html').read_text()
+          assert "fetch('/api/duty-month/latest'" in html
+          assert "loadSavedMonth();" in html
+          assert "monthlyData[date]" in html
+          print('Page initialization checks passed')
+          PY

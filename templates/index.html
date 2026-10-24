@@ -281,6 +281,54 @@ async function uploadExcel(input) {
   }
 }
 
+// ─── 自動載入已儲存的大表 ─────────────────────────────────────
+async function loadSavedMonth() {
+  const zone = document.getElementById('excel-zone');
+  try {
+    const response = await fetch('/api/duty-month/latest', {cache:'no-store'});
+    if (!response.ok) throw new Error('HTTP '+response.status);
+    const saved = await response.json();
+    if (!saved.year || !saved.month || !Array.isArray(saved.days) || !saved.days.length) return;
+    currentYear = saved.year;
+    currentMonth = saved.month;
+    monthlyData = {};
+    sakeByDate = {};
+    const people = new Set();
+    saved.days.forEach(row => {
+      const date = row.date_str;
+      const times = Array.isArray(row.sake_times) ? row.sake_times : [];
+      monthlyData[date] = {
+        rocDate: row.roc_date, weekday: row.weekday,
+        isHoliday: row.is_holiday, hasSake: row.has_sake,
+        sakeTimes: times, onDuty: row.on_duty || [], offDuty: row.off_duty || []
+      };
+      for (const person of [...(row.on_duty || []), ...(row.off_duty || [])]) {
+        if (person && person.name) people.add(person.name);
+      }
+      if (row.has_sake && times.length) {
+        const first = times[0];
+        sakeByDate[date] = typeof first === 'string' ? first : `${first.start}-${first.end}`;
+      }
+    });
+    zone.classList.add('done');
+    zone.innerHTML = `<div style="font-size:24px">✅</div><div style="font-size:14px;font-weight:700;margin-top:8px">已載入 ${currentYear}年${currentMonth}月大表</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">Supabase 已儲存 ${saved.days.length} 天，無須重新上傳</div>`;
+    document.getElementById('stat-staff').textContent = people.size || '－';
+    const tbody = document.getElementById('sake-table-body');
+    tbody.innerHTML = '';
+    Object.entries(sakeByDate).forEach(([date, time]) => {
+      const [start,end] = time.split('-');
+      const display = start && end ? `${start}:00 – ${end}:00` : '未提供時段';
+      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${display}</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
+    });
+    document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
+    document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
+    renderCal();
+  } catch (error) {
+    console.error('Failed to load saved month:', error);
+    zone.innerHTML = '<div style="color:var(--red)">讀取已儲存月份失敗，請稍後重新整理；無須重複上傳</div>';
+  }
+}
+
 // ─── 月曆 ───────────────────────────────────────────────────
 function renderCal() {
   const cal = document.getElementById('cal'); cal.innerHTML = '';
@@ -571,6 +619,7 @@ async function doUploadTmpl(type, input) {
 
 // 初始化
 renderCal();
+loadSavedMonth();
 </script>
 </body>
 </html>

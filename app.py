@@ -489,6 +489,21 @@ def get_duty(date_str):
         })
     return jsonify(None)
 
+@app.route('/api/duty-month/latest', methods=['GET'])
+def get_latest_duty_month():
+    """Return the most recently uploaded duty month from persisted Supabase rows."""
+    if not SUPABASE_URL:
+        return jsonify({'year': None, 'month': None, 'days': []})
+    recent = sb_get('monthly_duty', params={'select': 'date_str', 'order': 'created_at.desc,id.desc', 'limit': '1'})
+    if not recent:
+        return jsonify({'year': None, 'month': None, 'days': []})
+    match = re.match(r'^([0-9]+)年([0-9]+)月[0-9]+日' + chr(36), recent[0].get('date_str', ''))
+    if not match:
+        return jsonify({'error': '儲存的勤務日期格式不正確'}), 500
+    year, month = map(int, match.groups())
+    rows = sb_get('monthly_duty', params={'date_str': f'like.{year}年{month}月%', 'order': 'id'})
+    return jsonify({'year': year, 'month': month, 'days': rows})
+
 @app.route('/api/duty-month/<int:year>/<int:month>', methods=['GET'])
 def get_duty_month(year, month):
     """取某月所有勤務資料（給月曆用）"""
