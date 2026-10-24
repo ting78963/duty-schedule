@@ -297,13 +297,17 @@ def parse_excel(file_bytes):
         }
         # Find the supervisor headers in the top rows; do not assume fixed columns.
         supervisor_cols = {}
-        for header_row in range(1, min(ws_all.max_row, 12) + 1):
+        supervisor_header_row = None
+        for header_row in range(1, min(ws_all.max_row, 50) + 1):
             for col in range(1, ws_all.max_column + 1):
                 label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\n', '')
+                if label == '長隊':
+                    label = '隊長'
                 if label in supervisor_titles:
                     supervisor_cols[label] = col
+                    supervisor_header_row = header_row
 
-        for row in range(3, ws_all.max_row + 1):
+        for row in range((supervisor_header_row or ws_all.max_row) + 1, ws_all.max_row + 1):
             date_val = ws_all.cell(row, 1).value
             if isinstance(date_val, datetime):
                 date_obj = date_val
