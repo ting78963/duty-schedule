@@ -140,10 +140,8 @@ def set_cell(cell, text, size=None, color='000000'):
                     el = rpr.find(f'{{{ns}}}{tag}')
                     if el is None: el = etree.SubElement(rpr, f'{{{ns}}}{tag}')
                     el.set(f'{{{ns}}}val', str(size))
-            else:
-                for tag in ['sz','szCs']:
-                    el = rpr.find(f'{{{ns}}}{tag}')
-                    if el is not None: rpr.remove(el)
+            # When size is unspecified, retain the template's exact run font size.
+            # Removing w:sz/w:szCs made narrow remarks (e.g. 內部管理) wrap.
             return
     cell.paragraphs[0].add_run(text)
 
