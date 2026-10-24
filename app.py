@@ -259,8 +259,10 @@ def parse_excel(file_bytes):
                     status = raw[:2]  # 常訓等備考
 
             person = {'name': name, 'ban': ban, 'status': status}
+            # Any kind of leave is off-duty; 停休 means leave was cancelled.
             off_statuses = ['輪','優','休','補','公']
-            if any(s == status for s in off_statuses):
+            is_leave = (status in off_statuses or ('假' in str(status) and '停休' not in str(status)))
+            if is_leave:
                 off_duty.append(person)
             else:
                 on_duty.append(person)
