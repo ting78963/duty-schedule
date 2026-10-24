@@ -272,6 +272,58 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
+    # ── 全隊大表：主管督勤欄（依職稱，不依外勤姓名） ──
+    supervisor_codes = {
+        '隊長': (63, '張瑞忠'),
+        '林副隊長': (62, '林志明'),
+        '陳副隊長': (61, '陳彥文'),
+        '李秘書': (60, '李安景'),
+        '姚組長': (35, '姚宗志'),
+        '翁組長': (43, '翁水成'),
+    }
+    if '全隊大表' in wb.sheetnames:
+        ws_all = wb['全隊大表']
+        # Find the supervisor headers in the top rows; do not assume fixed columns.
+        supervisor_cols = {}
+        for header_row in range(1, min(ws_all.max_row, 12) + 1):
+            for col in range(1, ws_all.max_column + 1):
+                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\\n', '')
+                if label in supervisor_codes:
+                    supervisor_cols[label] = col
+
+        for row in range(3, ws_all.max_row + 1):
+            date_val = ws_all.cell(row, 1).value
+            if isinstance(date_val, datetime):
+                date_obj = date_val
+            else:
+                try:
+                    date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
+                except (TypeError, ValueError):
+                    continue
+            date_str = f'{date_obj.year - 1911}年{date_obj.month}月{date_obj.day}日'
+            if date_str not in monthly_data:
+                continue
+            day_data = monthly_data[date_str]
+            for title, col in supervisor_cols.items():
+                raw = str(ws_all.cell(row, col).value or '').strip()
+                if not raw:
+                    continue
+                code, name = supervisor_codes[title]
+                status = ''
+                if '輪休' in raw or raw == '輪':
+                    status = '輪休'
+                elif '公假' in raw or '公休' in raw:
+                    status = '公假'
+                elif '休假' in raw or raw in ('休', '優', '補'):
+                    status = '休假'
+                if not status:
+                    continue
+                person = {'name': name, 'ban': code, 'status': status}
+                # Ensure the same supervisor never appears twice.
+                day_data['on_duty'] = [p for p in day_data['on_duty'] if p.get('ban') != code]
+                day_data['off_duty'] = [p for p in day_data['off_duty'] if p.get('ban') != code]
+                day_data['off_duty'].append(person)
+
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
