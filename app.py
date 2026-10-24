@@ -497,7 +497,7 @@ def get_latest_duty_month():
     recent = sb_get('monthly_duty', params={'select': 'date_str', 'order': 'created_at.desc,id.desc', 'limit': '1'})
     if not recent:
         return jsonify({'year': None, 'month': None, 'days': []})
-    match = re.match(r'^(\\d+)年(\\d+)月\\d+日' + chr(36), recent[0].get('date_str', ''))
+    match = re.match(r'^([0-9]+)年([0-9]+)月[0-9]+日' + chr(36), recent[0].get('date_str', ''))
     if not match:
         return jsonify({'error': '儲存的勤務日期格式不正確'}), 500
     year, month = map(int, match.groups())
