@@ -299,8 +299,19 @@ def parse_excel(file_bytes):
                 try:
                     date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
                 except (TypeError, ValueError):
-                    continue
-            date_str = f'{date_obj.year - 1911}年{date_obj.month}月{date_obj.day}日'
+                    # The full-team duty sheet commonly stores only day numbers (1..31).
+                    # Resolve against the month already parsed from the external roster.
+                    try:
+                        day_number = int(date_val)
+                    except (TypeError, ValueError):
+                        continue
+                    candidates = [k for k in monthly_data if k.endswith(f'月{day_number}日')]
+                    if len(candidates) != 1:
+                        continue
+                    date_str = candidates[0]
+                    date_obj = None
+            if date_obj is not None:
+                date_str = f'{date_obj.year - 1911}年{date_obj.month}月{date_obj.day}日'
             if date_str not in monthly_data:
                 continue
             day_data = monthly_data[date_str]
