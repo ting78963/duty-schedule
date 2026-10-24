@@ -445,7 +445,14 @@ def generate_word(data):
         if row[NAME_COL].text.strip() != name:
             set_cell(row[NAME_COL], name)
         status = person.get('status') or ''
-        if status and row[NOTE_COL].text.strip() != status:
+        # Internal staff use their own note, not the right-hand leave directory.
+        # Clear outdated leave marks when the person is on duty today.
+        if isinstance(ban, int) and ban >= 21:
+            status_text = {'輪': '輪休', '休': '休假', '優': '休假',
+                           '補': '休假', '公': '公假'}.get(status, status)
+            if row[NOTE_COL].text.strip() != status_text:
+                set_cell(row[NOTE_COL], status_text)
+        elif status and row[NOTE_COL].text.strip() != status:
             set_cell(row[NOTE_COL], status)
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休', row_cells)
