@@ -345,7 +345,12 @@ def generate_word(data):
     # Column mapping is resolved after loading the document.
 
     lx, bx, gg = [], [], []
+    # Only field staff appear in the right-hand leave directory.
+    # Internal staff (21+) and supervisors keep leave status in their own note.
     for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
+        ban = s.get('ban')
+        if not isinstance(ban, int) or ban > 20:
+            continue
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
         elif st in ['優','休','補']: bx.append(s)
