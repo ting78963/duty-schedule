@@ -408,7 +408,9 @@ def save_to_supabase(monthly_data):
     # 批次 upsert（每次50筆）
     for i in range(0, len(records), 50):
         batch = records[i:i+50]
-        sb_post('monthly_duty', batch)
+        response = sb_post('monthly_duty', batch)
+        if not isinstance(response, list) or len(response) != len(batch):
+            raise RuntimeError(f'資料庫寫入未確認：第 {i // 50 + 1} 批，回應 {str(response)[:300]}')
     return len(records)
 
 def sync_staff(staff_names):
@@ -574,6 +576,14 @@ def parse_excel_api():
         # 自動存到 Supabase
         saved = save_to_supabase(result['monthlyData'])
         result['savedDays'] = saved
+        # Report the actual parsed supervisor leave rows for audit.
+        result['supervisorAudit'] = {
+            date: [p for p in day.get('off_duty', [])
+                   if p.get('ban') in (61, 62, 63)]
+            for date, day in result['monthlyData'].items()
+            if any(p.get('ban') in (61, 62, 63)
+                   for p in day.get('off_duty', []))
+        }
         # 回傳新人員名單（前端確認後再同步）
         new_staff = sync_staff(result['staffFromExcel'])
         result['newStaff'] = new_staff
