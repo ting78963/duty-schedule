@@ -357,10 +357,10 @@ def parse_excel(file_bytes):
                 if code is None:
                     continue
                 status = ''
-                if '輪休' in raw or raw == '輪':
-                    status = '輪休'
-                elif '公假' in raw or '公休' in raw:
+                if '公假' in raw or '公休' in raw:
                     status = '公假'
+                elif '輪休' in raw or raw == '輪':
+                    status = '輪休'
                 elif '休假' in raw or raw in ('休', '優', '補'):
                     status = '休假'
                 if not status:
