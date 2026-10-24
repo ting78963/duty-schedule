@@ -524,11 +524,15 @@ def generate_word(data):
             set_cell(row_cells[r_idx][OCODE_COL], '')
             set_cell(row_cells[r_idx][ONAME_COL], '')
 
-    for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
-        for j, s in enumerate(people):
-            if j >= len(rows): break
-            set_cell(row_cells[rows[j]][OCODE_COL], str(s['ban']) if isinstance(s.get('ban'), int) else '')
-            set_cell(row_cells[rows[j]][ONAME_COL], s['name'])
+    # Never silently drop leave entries if a template section has too few rows.
+    for label, people, rows in [('輪休', lx, lx_rows), ('休(補)假', bx, bx_rows), ('公假', gg, gg_rows)]:
+        if not rows:
+            raise ValueError(f'{roc_date} Word範本找不到「{label}」欄位')
+        if len(people) > len(rows):
+            raise ValueError(f'{roc_date}「{label}」共{len(people)}人，但範本只有{len(rows)}格，禁止漏列')
+        for j, person in enumerate(people):
+            set_cell(row_cells[rows[j]][OCODE_COL], str(person['ban']) if isinstance(person.get('ban'), int) else '')
+            set_cell(row_cells[rows[j]][ONAME_COL], person['name'])
 
     day = roc_date.split('年')[1].split('日')[0] + '日'
     for cell in row_cells[0]:
