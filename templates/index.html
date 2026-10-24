@@ -520,6 +520,10 @@ async function generateOne(dateStr, isHoliday, hasSake) {
   btn.disabled = true;
   try {
     const res = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || `伺服器錯誤 HTTP ${res.status}`);
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href=url; a.download=`勤務表_${dateStr}.docx`;
