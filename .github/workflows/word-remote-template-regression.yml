@@ -47,6 +47,16 @@ jobs:
           assert zipfile.is_zipfile(io.BytesIO(response.data))
           doc=Document(io.BytesIO(response.data))
           assert doc.tables
+          table=doc.tables[0]
+          assert len(table.rows)>=25, 'Word table has too few rows'
+          text=' '.join(cell.text for row in table.rows for cell in row.cells)
+          names=[s['name'] for s in data['onDuty']+data['offDuty'] if s.get('name')]
+          found=[n for n in names if n in text]
+          assert len(found)>=min(10,len(names)), 'Missing real personnel names: '+str(len(found))+'/'+str(len(names))
+          assert '休(補)假' in text and '公假' in text, 'Leave section headings missing'
+          assert any('19' in cell.text for row in table.rows for cell in row.cells), 'Code 19 missing'
+          assert any('29' in cell.text for row in table.rows for cell in row.cells), 'Code 29 missing'
+          print('Real personnel verified:',len(found),'of',len(names),flush=True)
           print('DOCX generation from remote-only template passed')
           PY
       - name: Check browser error handling
