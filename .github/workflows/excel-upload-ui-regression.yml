@@ -1,0 +1,30 @@
+name: Excel upload UI regression
+
+on:
+  push:
+    branches:
+      - fix/excel-upload-sake-display-20261024
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify sake time display handles object and text
+        run: |
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const html=fs.readFileSync('templates/index.html','utf8');
+          const m=html.match(/Object\.entries\(sakeByDate\)\.forEach\(\(\[date, time\]\) => \{([\s\S]*?)\n    \}\);/);
+          assert(m,'Sake rendering loop missing');
+          const f=new Function('sakeByDate','tbody', 'const red="red";'+ 'Object.entries(sakeByDate).forEach(([date,time])=>{'+m[1]+'\n});');
+          for(const time of [{start:18,end:22},'18-22']){
+            const tbody={innerHTML:''};
+            f({'115年11月1日':time},tbody);
+            assert(tbody.innerHTML.includes('18:00 – 22:00'),tbody.innerHTML);
+          }
+          console.log('Both structured and string sake time display passed');
+          JS
