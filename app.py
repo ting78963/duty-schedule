@@ -161,18 +161,22 @@ def set_red_border(row):
             el.set(f'{{{ns}}}sz', '16')
             el.set(f'{{{ns}}}color', 'FF0000')
 
-def find_section_rows(t, oname_col, label):
+def find_section_rows(t, oname_col, label, row_cells=None):
+    # Reuse resolved rows: python-docx repeatedly reconstructs merged-cell grids.
+    cells_at = (lambda i: row_cells[i]) if row_cells is not None else (lambda i: t.rows[i].cells)
     start = None
     for r_idx in range(len(t.rows)):
-        if oname_col >= len(t.rows[r_idx].cells): continue
-        if label in t.rows[r_idx].cells[oname_col].text.strip():
+        cells = cells_at(r_idx)
+        if oname_col >= len(cells): continue
+        if label in cells[oname_col].text.strip():
             start = r_idx + 1
             break
     if start is None: return []
     rows = []
     for r_idx in range(start, len(t.rows)):
-        if oname_col >= len(t.rows[r_idx].cells): break
-        txt = t.rows[r_idx].cells[oname_col].text.strip()
+        cells = cells_at(r_idx)
+        if oname_col >= len(cells): break
+        txt = cells[oname_col].text.strip()
         if txt and any(x in txt for x in ['假','附記','巡邏','調適']): break
         rows.append(r_idx)
     return rows
@@ -349,48 +353,50 @@ def generate_word(data):
 
     doc = Document(io.BytesIO(template_bytes(tmpl_path)))
     t = doc.tables[0]
+    # Resolve each complex merged row only once instead of dozens of times.
+    row_cells = [row.cells for row in t.rows]
 
     ban_to_row = {}
     for r_idx in range(4, len(t.rows)):
-        if CODE_COL >= len(t.rows[r_idx].cells): continue
-        ct = t.rows[r_idx].cells[CODE_COL].text.strip()
+        if CODE_COL >= len(row_cells[r_idx]): continue
+        ct = row_cells[r_idx][CODE_COL].text.strip()
         if ct.isdigit() and 1 <= int(ct) <= 20:
             ban_to_row[int(ct)] = r_idx
 
     for ban, r_idx in ban_to_row.items():
         for ci in [NAME_COL, NOTE_COL]:
-            for para in t.rows[r_idx].cells[ci].paragraphs:
+            for para in row_cells[r_idx][ci].paragraphs:
                 for run in para.runs: run.text = ''
 
     for s in on_duty:
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
-        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+        set_cell(row_cells[ban_to_row[ban]][NAME_COL], s['name'])
+        set_cell(row_cells[ban_to_row[ban]][NOTE_COL], s.get('status') or '', size=24)
 
     for s in off_duty:
         ban = s.get('ban')
         if not ban or ban not in ban_to_row: continue
-        set_cell(t.rows[ban_to_row[ban]].cells[NAME_COL], s['name'])
-        set_cell(t.rows[ban_to_row[ban]].cells[NOTE_COL], s.get('status') or '', size=24)
+        set_cell(row_cells[ban_to_row[ban]][NAME_COL], s['name'])
+        set_cell(row_cells[ban_to_row[ban]][NOTE_COL], s.get('status') or '', size=24)
 
-    lx_rows = find_section_rows(t, ONAME_COL, '輪   休')
-    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假')
-    gg_rows = find_section_rows(t, ONAME_COL, '公假')
+    lx_rows = find_section_rows(t, ONAME_COL, '輪   休', row_cells)
+    bx_rows = find_section_rows(t, ONAME_COL, '休(補)假', row_cells)
+    gg_rows = find_section_rows(t, ONAME_COL, '公假', row_cells)
 
     for rows in [lx_rows, bx_rows, gg_rows]:
         for r_idx in rows:
-            set_cell(t.rows[r_idx].cells[OCODE_COL], '')
-            set_cell(t.rows[r_idx].cells[ONAME_COL], '')
+            set_cell(row_cells[r_idx][OCODE_COL], '')
+            set_cell(row_cells[r_idx][ONAME_COL], '')
 
     for people, rows in [(lx, lx_rows), (bx, bx_rows), (gg, gg_rows)]:
         for j, s in enumerate(people):
             if j >= len(rows): break
-            set_cell(t.rows[rows[j]].cells[OCODE_COL], str(s.get('ban','')))
-            set_cell(t.rows[rows[j]].cells[ONAME_COL], s['name'])
+            set_cell(row_cells[rows[j]][OCODE_COL], str(s.get('ban','')))
+            set_cell(row_cells[rows[j]][ONAME_COL], s['name'])
 
     day = roc_date.split('年')[1].split('日')[0] + '日'
-    for cell in t.rows[0].cells:
+    for cell in row_cells[0]:
         if '民國' in cell.text and '年' in cell.text:
             for para in cell.paragraphs:
                 for run in para.runs:
@@ -403,9 +409,9 @@ def generate_word(data):
     if sake_times and has_sake:
         time_to_row = {}
         for r_idx in range(len(t.rows)):
-            row = t.rows[r_idx]
-            if not row.cells: continue
-            cell_txt = row.cells[0].text.strip()
+            cells = row_cells[r_idx]
+            if not cells: continue
+            cell_txt = cells[0].text.strip()
             m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
             if m:
                 h = int(m.group(1))
