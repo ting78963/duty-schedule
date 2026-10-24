@@ -237,8 +237,9 @@ def parse_excel(file_bytes):
         off_duty = []
 
         for col, name in name_cols.items():
-            # 番號在姓名左欄，狀態在右欄
-            ban_val = ws_ext.cell(row=row, column=col-1).value
+            # The numbered shift is in the SAME column as the staff name
+            # (e.g. C2=洪立建, C3=1); the status is in the next column.
+            ban_val = ws_ext.cell(row=row, column=col).value
             status_val = ws_ext.cell(row=row, column=col+1).value
 
             ban = None
