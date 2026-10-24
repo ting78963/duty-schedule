@@ -487,7 +487,9 @@ def generate_word(data):
         if isinstance(ban, int) and ban >= 21:
             leave_status = {'輪': '輪休', '休': '休假', '優': '休假',
                             '補': '休假', '公': '公假'}.get(status, status)
-            if leave_status in ('輪休', '休假', '公假'):
+            # Preserve Excel's full leave text, including partial-day and mixed leave.
+            # E.g. 8-12公假 13-17休假 must not be reduced to a single category.
+            if any(token in leave_status for token in ('輪休', '休假', '公假')):
                 if row[NOTE_COL].text.strip() != leave_status:
                     set_cell(row[NOTE_COL], leave_status)
         elif status and row[NOTE_COL].text.strip() != status:
