@@ -463,8 +463,8 @@ def generate_word(data):
             continue
         st = s.get('status') or ''
         if st == '輪': lx.append(s)
-        elif st in ['優','休','補'] or ('假' in str(st) and '停休' not in str(st) and st != '公假'): bx.append(s)
-        elif st == '公': gg.append(s)
+        elif st == '公' or '公假' in str(st): gg.append(s)
+        elif st in ['優','休','補'] or ('假' in str(st) and '停休' not in str(st)): bx.append(s)
 
     doc = Document(io.BytesIO(template_bytes(tmpl_path)))
     t = doc.tables[0]
