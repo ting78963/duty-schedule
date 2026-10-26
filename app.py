@@ -388,12 +388,15 @@ def parse_excel(file_bytes):
                 # Excel remains authoritative for each day's duty/leave status.
                 verified_supervisor_codes = {
                     '隊長': 63, '林副隊長': 62, '陳副隊長': 61,
+                    '李秘書': 60, '姚組長': 35, '翁組長': 43,
                 }
-                code = fixed_staff.get(name)
-                if code is None:
-                    code = verified_supervisor_codes.get(title)
-                if code is None:
-                    continue
+                code = verified_supervisor_codes[title]
+                roster_code = fixed_staff.get(name)
+                if roster_code is not None and roster_code != code:
+                    raise ValueError(
+                        f'{date_str} 主管 {name} Excel 名冊代號 {roster_code} '
+                        f'與正式對照代號 {code} 不符'
+                    )
                 status = ''
                 if '公假' in raw or '公休' in raw:
                     status = '公假'
