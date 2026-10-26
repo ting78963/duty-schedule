@@ -298,13 +298,13 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
-    # 全隊大表第 2 列 AZ:BV 是內勤姓名；第 3 列起同欄為每日狀態。
+    # 全隊大表第 2 列 AW:BV 是內勤姓名；第 3 列起同欄為每日狀態。
     # BQ:BS 不是固定代號名冊，不能拿每日值誤判為人員代號。
     fixed_roster = {}
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
         internal_cols = {}
-        for col in range(52, 75):  # AZ:BV
+        for col in range(49, 75):  # AW:BV
             name = str(ws_all.cell(2, col).value or '').strip()
             if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
                 internal_cols[col] = name
@@ -312,7 +312,7 @@ def parse_excel(file_bytes):
         # Until the authoritative code/name mapping is verified, preserve
         # daily internal statuses without inventing a numeric code.
         for row in range(3, ws_all.max_row + 1):
-            raw_date = ws_all.cell(row, 1).value
+            raw_date = ws_all.cell(row, 47).value
             if isinstance(raw_date, datetime):
                 d = raw_date
             elif isinstance(raw_date, (int, float)) and 30000 <= raw_date <= 80000:
@@ -324,6 +324,9 @@ def parse_excel(file_bytes):
                 continue
             day_data = monthly_data[key]
             for col, name in internal_cols.items():
+                if any(p.get('name') == name for p in
+                       day_data['on_duty'] + day_data['off_duty']):
+                    raise ValueError(f'{key} {name} 在外勤與全隊大表重複，需核對來源')
                 raw = str(ws_all.cell(row, col).value or '').strip()
                 if '停休' in raw or '△' in raw:
                     status = '停休'
@@ -379,7 +382,7 @@ def parse_excel(file_bytes):
                     supervisor_header_row = header_row
 
         for row in range((supervisor_header_row or ws_all.max_row) + 1, ws_all.max_row + 1):
-            date_val = ws_all.cell(row, 1).value
+            date_val = ws_all.cell(row, 47).value
             if isinstance(date_val, datetime):
                 date_obj = date_val
             else:
