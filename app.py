@@ -351,17 +351,9 @@ def parse_excel(file_bytes):
     supervisor_titles = ('隊長', '林副隊長', '陳副隊長', '李秘書', '姚組長', '翁組長')
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
+        # BQ:BS contain named staff's daily statuses, not a code/name
+        # directory. Do not derive supervisor codes from these cells.
         fixed_staff = {}
-        for roster_row in range(1, ws_all.max_row + 1):
-            code_val = ws_all.cell(roster_row, 69).value  # BQ
-            name_val = ws_all.cell(roster_row, 71).value  # BS
-            try:
-                code = int(code_val)
-            except (TypeError, ValueError):
-                continue
-            name = str(name_val or '').strip()
-            if 21 <= code <= 99 and 2 <= len(name) <= 5:
-                fixed_staff[name] = code
         # Resolve supervisor titles through their Excel roster names.
         # Titles without a verified name-to-code mapping are skipped safely.
         supervisor_names = {
