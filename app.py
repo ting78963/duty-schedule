@@ -426,18 +426,26 @@ def parse_excel(file_bytes):
             '陳副隊長': '陳彥文', '李秘書': '李安景',
             '姚組長': '姚宗志', '翁組長': '翁水成',
         }
-        # Find the supervisor headers in the top rows; do not assume fixed columns.
+        # Headers may be spread across the top-right duty area. Use one
+        # verified header row only; never mix columns from different rows.
         supervisor_cols = {}
         supervisor_header_row = None
         for header_row in range(1, min(ws_all.max_row, 50) + 1):
+            found = {}
             for col in range(1, ws_all.max_column + 1):
-                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\n', '')
+                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\\n', '')
                 if label == '長隊':
                     label = '隊長'
                 if label in supervisor_titles:
-                    supervisor_cols[label] = col
-                    supervisor_header_row = header_row
-
+                    if label in found:
+                        raise ValueError(f'主管表頭 {label} 在第 {header_row} 列重複')
+                    found[label] = col
+            if len(found) >= 4:
+                supervisor_cols = found
+                supervisor_header_row = header_row
+                break
+        if not supervisor_cols:
+            raise ValueError('全隊大表未找到可核對的主管督勤表頭，拒絕略過主管資料')
         for row in range((supervisor_header_row or ws_all.max_row) + 1, ws_all.max_row + 1):
             date_val = ws_all.cell(row, 47).value
             if isinstance(date_val, datetime):
