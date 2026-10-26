@@ -145,6 +145,21 @@ def set_cell(cell, text, size=None, color='000000'):
             return
     cell.paragraphs[0].add_run(text)
 
+def set_cell_preserving_format(cell, text):
+    """Replace visible text without changing approved Word run/paragraph formatting."""
+    text = str(text) if text is not None else ''
+    paragraphs = cell.paragraphs
+    if not paragraphs:
+        return
+    first = True
+    for para in paragraphs:
+        for run in para.runs:
+            run.text = text if first else ''
+            first = False
+    if first:
+        paragraphs[0].add_run(text)
+
+
 def set_red_border_cells(cells):
     for cell in cells:
         tc = cell._tc
@@ -587,8 +602,8 @@ def generate_word(data):
 
     for rows in [lx_rows, bx_rows, gg_rows]:
         for r_idx in rows:
-            set_cell(row_cells[r_idx][OCODE_COL], '')
-            set_cell(row_cells[r_idx][ONAME_COL], '')
+            set_cell_preserving_format(row_cells[r_idx][OCODE_COL], '')
+            set_cell_preserving_format(row_cells[r_idx][ONAME_COL], '')
 
     # Never silently drop leave entries if a template section has too few rows.
     for label, people, rows in [('輪休', lx, lx_rows), ('休(補)假', bx, bx_rows), ('公假', gg, gg_rows)]:
@@ -597,8 +612,8 @@ def generate_word(data):
         if len(people) > len(rows):
             raise ValueError(f'{roc_date}「{label}」共{len(people)}人，但範本只有{len(rows)}格，禁止漏列')
         for j, person in enumerate(people):
-            set_cell(row_cells[rows[j]][OCODE_COL], str(person['ban']) if isinstance(person.get('ban'), int) else '')
-            set_cell(row_cells[rows[j]][ONAME_COL], person['name'])
+            set_cell_preserving_format(row_cells[rows[j]][OCODE_COL], str(person['ban']) if isinstance(person.get('ban'), int) else '')
+            set_cell_preserving_format(row_cells[rows[j]][ONAME_COL], person['name'])
 
     day = roc_date.split('年')[1].split('日')[0] + '日'
     for cell in row_cells[0]:
