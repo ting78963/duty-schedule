@@ -505,16 +505,25 @@ def generate_word(data):
     # Column mapping is resolved after loading the document.
 
     lx, bx, gg = [], [], []
-    # Only field staff appear in the right-hand leave directory.
-    # Internal staff (21+) and supervisors keep leave status in their own note.
-    for s in sorted(off_duty, key=lambda x: x.get('ban') or 99):
-        ban = s.get('ban')
-        if not isinstance(ban, int) or ban > 20:
+    # All numbered personnel, including internal staff and supervisors, belong
+    # in the daily right-hand leave directory. Never reuse yesterday's entries.
+    seen_leave_codes = set()
+    for person in sorted(off_duty, key=lambda x: x.get('ban') if isinstance(x.get('ban'), int) else 999):
+        ban = person.get('ban')
+        if not isinstance(ban, int):
+            continue  # Unnumbered new personnel must not receive invented codes.
+        if ban in seen_leave_codes:
+            raise ValueError(f'{roc_date} 右側假別代號 {ban} 重複')
+        seen_leave_codes.add(ban)
+        st = str(person.get('status') or '').strip()
+        if '停休' in st:
             continue
-        st = s.get('status') or ''
-        if st == '輪': lx.append(s)
-        elif st == '公' or '公假' in str(st): gg.append(s)
-        elif st in ['優','休','補'] or ('假' in str(st) and '停休' not in str(st)): bx.append(s)
+        if st in ('輪', '輪休'):
+            lx.append(person)
+        elif st in ('公', '公假') or '公假' in st:
+            gg.append(person)
+        elif st in ('優', '休', '補', '休假', '補休') or '假' in st:
+            bx.append(person)
 
     doc = Document(io.BytesIO(template_bytes(tmpl_path)))
     t = doc.tables[0]
