@@ -219,16 +219,16 @@ def parse_excel(file_bytes):
     if not ws_ext:
         ws_ext = wb.worksheets[0]
 
-    # 已核對 115 年 11 月原始檔：第 3 列為人員姓名，第 4 列起為每日資料
+    # 原始 115 年 11 月 Excel：第 2 列為姓名，第 3 列起為每日資料
     name_cols = {}
     for c in range(3, min(ws_ext.max_column, 41)+1, 2):
-        v = ws_ext.cell(row=3, column=c).value
+        v = ws_ext.cell(row=2, column=c).value
         if v and isinstance(v, str) and len(v) >= 2 and v not in ['當日休息人數','固定番人數','日期','星期']:
             name_cols[c] = v
             staff_from_excel[v] = True
 
     # 列3以後：每天
-    for row in range(4, ws_ext.max_row+1):
+    for row in range(3, ws_ext.max_row+1):
         date_val = ws_ext.cell(row=row, column=1).value
         if not date_val: continue
         if isinstance(date_val, datetime):
