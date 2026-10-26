@@ -902,8 +902,13 @@ def parse_excel_api():
         )
         if source_check.status_code != 200 or source_check.content != excel_bytes:
             raise RuntimeError('原始 Excel 回讀驗證失敗，停止匯入')
-        # Sync authoritative fixed roster before publishing daily schedules.
-        changed_codes = sync_fixed_roster(result['fixedRoster'])
+        # The uploaded workbook has no separate verified fixed-code
+        # directory at BQ:BS. Do not mutate the staff table using a
+        # fabricated roster. The daily parse retains known codes only.
+        if result['fixedRoster']:
+            changed_codes = sync_fixed_roster(result['fixedRoster'])
+        else:
+            changed_codes = []
         result['rosterUpdatedCodes'] = changed_codes
         # 自動存到 Supabase
         saved = save_to_supabase(result['monthlyData'])
