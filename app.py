@@ -298,45 +298,50 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
-    # Read the fixed code/name directory (BQ:BS) on every upload.
-    # Blank named positions are meaningful; unnumbered newcomers are excluded.
+    # 全隊大表第 2 列 AZ:BV 是內勤姓名；第 3 列起同欄為每日狀態。
+    # BQ:BS 不是固定代號名冊，不能拿每日值誤判為人員代號。
     fixed_roster = {}
     if '全隊大表' in wb.sheetnames:
-        roster_sheet = wb['全隊大表']
-        for rr in range(1, roster_sheet.max_row + 1):
-            code_raw = roster_sheet.cell(rr, 69).value
-            if not str(code_raw or '').strip().isdigit():
+        ws_all = wb['全隊大表']
+        internal_cols = {}
+        for col in range(52, 75):  # AZ:BV
+            name = str(ws_all.cell(2, col).value or '').strip()
+            if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
+                internal_cols[col] = name
+                staff_from_excel[name] = True
+        # Until the authoritative code/name mapping is verified, preserve
+        # daily internal statuses without inventing a numeric code.
+        for row in range(3, ws_all.max_row + 1):
+            raw_date = ws_all.cell(row, 1).value
+            if isinstance(raw_date, datetime):
+                d = raw_date
+            elif isinstance(raw_date, (int, float)) and 30000 <= raw_date <= 80000:
+                d = openpyxl.utils.datetime.from_excel(raw_date, wb.epoch)
+            else:
                 continue
-            code = int(code_raw)
-            if 21 <= code <= 54:
-                raw_name = roster_sheet.cell(rr, 71).value
-                fixed_roster[code] = str(raw_name or '').strip()
-    # The daily parser currently reads the external roster first. Never
-    # publish a supposedly complete daily roster while fixed internal staff
-    # (21-54) are absent from the day's parsed personnel. This deliberately
-    # fails closed until daily internal-status extraction is implemented
-    # against the approved workbook layout.
-    if fixed_roster:
-        for date_str, day_data in monthly_data.items():
-            people = day_data['on_duty'] + day_data['off_duty']
-            by_code = {p.get('ban'): p.get('name') for p in people
-                       if p.get('ban') is not None}
-            missing = [(code, name) for code, name in fixed_roster.items()
-                       if name and code not in by_code]
-            mismatched = [(code, name, by_code[code])
-                          for code, name in fixed_roster.items()
-                          if name and code in by_code and by_code[code] != name]
-            if missing or mismatched:
-                missing_text = ', '.join(f'{code}:{name}' for code, name in missing[:8])
-                mismatch_text = ', '.join(
-                    f'{code}:{name}!={actual}' for code, name, actual in mismatched[:8])
-                raise ValueError(
-                    f'{date_str} 內勤 21-54 尚未完整從每日 Excel 解析；'
-                    f'缺少 [{missing_text}]，姓名衝突 [{mismatch_text}]。'
-                    '禁止將不完整名冊儲存或生成勤務表'
-                )
-    # The workbook does not define the supervisor/secretary 60-63 mapping.
-    # Keep those separately verified records, never infer them from row order.
+            key = f'{d.year-1911}年{d.month}月{d.day}日'
+            if key not in monthly_data:
+                continue
+            day_data = monthly_data[key]
+            for col, name in internal_cols.items():
+                raw = str(ws_all.cell(row, col).value or '').strip()
+                if '停休' in raw or '△' in raw:
+                    status = '停休'
+                elif raw in ('輪', '輪休'):
+                    status = '輪休'
+                elif raw in ('休', '補', '優') or '休假' in raw or '補休' in raw:
+                    status = '休假'
+                elif raw in ('公', '公假') or '公假' in raw:
+                    status = '公假'
+                else:
+                    status = raw
+                person = {'name': name, 'ban': None, 'status': status,
+                          'sourceColumn': openpyxl.utils.get_column_letter(col)}
+                if status in ('輪休', '休假', '公假') or (
+                        '假' in status and '停休' not in status):
+                    day_data['off_duty'].append(person)
+                else:
+                    day_data['on_duty'].append(person)
 
     # ── 全隊大表：主管督勤欄（依職稱，不依外勤姓名） ──
     # Excel's fixed roster (BQ:BS) is authoritative for internal code/name.
