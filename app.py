@@ -330,11 +330,11 @@ def parse_excel(file_bytes):
                        day_data['on_duty'] + day_data['off_duty']):
                     raise ValueError(f'{key} {name} 在外勤與全隊大表重複，需核對來源')
                 raw = str(ws_all.cell(row, col).value or '').strip()
-                if '停休' in raw or '△' in raw:
+                if '停休' in raw or '△' in raw or 'Δ' in raw:
                     status = '停休'
                 elif raw in ('輪', '輪休'):
                     status = '輪休'
-                elif raw in ('休', '補', '優') or '休假' in raw or '補休' in raw:
+                elif raw in ('休', '補', '優') or '休假' in raw or '補休' in raw or raw.endswith('休'):
                     status = '休假'
                 elif raw in ('公', '公假') or '公假' in raw:
                     status = '公假'
