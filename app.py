@@ -233,10 +233,12 @@ def parse_excel(file_bytes):
         if not date_val: continue
         if isinstance(date_val, datetime):
             date_obj = date_val
+        elif isinstance(date_val, (int, float)) and 30000 <= date_val <= 80000:
+            date_obj = openpyxl.utils.datetime.from_excel(date_val, wb.epoch)
         else:
             try:
                 date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-            except:
+            except (TypeError, ValueError):
                 continue
 
         roc_year = date_obj.year - 1911
