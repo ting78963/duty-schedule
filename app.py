@@ -311,8 +311,25 @@ def parse_excel(file_bytes):
             if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
                 internal_cols[col] = name
                 staff_from_excel[name] = True
-        # Until the authoritative code/name mapping is verified, preserve
-        # daily internal statuses without inventing a numeric code.
+        # Approved Word template's fixed name/code directory. Never derive
+        # codes from worksheet column position. Names absent from this directory
+        # (e.g. newcomer 周彥璋) remain unnumbered.
+        approved_internal_codes = {
+            '林筠臻': 23, '黃雅琳': 26, '洪君智': 27,
+            '楊智為': 28, '陳淑卿': 29, '謝函儒': 31,
+            '曾義雄': 33, '姚宗志': 35, '柯育婷': 36,
+            '林裕善': 38, '王庭偉': 39, '林家豪': 41,
+            '張銥凌': 42, '翁水成': 43, '洪呈欣': 44,
+            '簡竹芳': 45, '沈宗漢': 46, '曾煙煌': 47,
+            '陳駿騰': 48, '李智偉': 50, '林新慶': 51,
+            '李金孔': 52, '董安民': 53, '陳昱靜': 54,
+        }
+        unknown = sorted(set(internal_cols.values()) -
+                         set(approved_internal_codes) - {'周彥璋'})
+        if unknown:
+            raise ValueError('全隊大表有未核對代號的人員：' + '、'.join(unknown))
+        # A new hire without an assigned code is retained for status
+        # auditing, but must never receive an invented number.
         for row in range(3, ws_all.max_row + 1):
             raw_date = ws_all.cell(row, 47).value
             if isinstance(raw_date, datetime):
@@ -340,7 +357,8 @@ def parse_excel(file_bytes):
                     status = '公假'
                 else:
                     status = raw
-                person = {'name': name, 'ban': None, 'status': status,
+                person = {'name': name, 'ban': approved_internal_codes.get(name),
+                          'status': status,
                           'sourceColumn': openpyxl.utils.get_column_letter(col)}
                 if status in ('輪休', '休假', '公假') or (
                         '假' in status and '停休' not in status):
