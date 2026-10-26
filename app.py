@@ -842,33 +842,46 @@ def get_duty_month(year, month):
     return jsonify(data)
 
 def verified_generation_input(payload):
-    """Never trust client-provided personnel, dates or template flags for output.
+    """Reparse the authoritative Excel on every generation request.
 
-    This is an interim consistency gate. Full eleven-step verification additionally
-    requires the source Excel bytes and a rendered Word inspection; until those
-    exist, generation must remain blocked rather than be called verified.
+    This checks source consistency only. Visual DOCX rendering verification is
+    still missing, so official output remains blocked until that is implemented.
     """
     if not isinstance(payload, dict):
         raise ValueError('生成資料格式不正確')
     date_str = payload.get('rocDate')
-    if not isinstance(date_str, str) or not re.fullmatch(r'\\d+年\\d+月\\d+日', date_str):
+    match = re.fullmatch(r'(\d+)年(\d+)月(\d+)日', str(date_str or ''))
+    if not match:
         raise ValueError('缺少有效的勤務日期')
-    if not SUPABASE_URL:
-        raise RuntimeError('無法讀取已儲存的勤務來源')
-    rows = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
-    if not isinstance(rows, list) or len(rows) != 1:
-        raise ValueError(f'{date_str} 找不到唯一的當日 Excel 解析資料')
-    row = rows[0]
+    roc_year, month, _ = map(int, match.groups())
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError('無法讀取原始 Excel')
+    object_name = f'source_excel/{roc_year + 1911}-{month:02d}.xlsx'
+    source = req.get(
+        f'{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{object_name}',
+        headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+        timeout=40
+    )
+    if source.status_code != 200:
+        raise RuntimeError(f'{date_str} 原始 Excel 不存在或讀取失敗，HTTP {source.status_code}')
+    if len(source.content) > 12 * 1024 * 1024:
+        raise ValueError('原始 Excel 超過 12MB')
+    parsed = parse_excel(source.content)
+    validate_monthly_data_before_write(parsed['monthlyData'])
+    day = parsed['monthlyData'].get(date_str)
+    if day is None:
+        raise ValueError(f'{date_str} 不在原始 Excel 內')
     expected = {
-        'rocDate': row['roc_date'], 'weekday': row['weekday'],
-        'isHoliday': row['is_holiday'], 'hasSake': row['has_sake'],
-        'sakeTimes': row['sake_times'], 'onDuty': row['on_duty'],
-        'offDuty': row['off_duty'],
+        'rocDate': day['roc_date'], 'weekday': day['weekday'],
+        'isHoliday': day['is_holiday'], 'hasSake': day['has_sake'],
+        'sakeTimes': day['sake_times'], 'onDuty': day['on_duty'],
+        'offDuty': day['off_duty'],
     }
+    # Reject tampering or stale frontend data. The source Excel is authoritative.
     for key, value in expected.items():
         if payload.get(key) != value:
-            raise ValueError(f'{date_str} {key} 與已儲存的 Excel 資料不一致，停止產檔')
-    raise RuntimeError('正式 11 步流程尚未完成：缺少每次生成的原始 Excel 重讀及 Word 渲染驗證，禁止交付未驗收檔案')
+            raise ValueError(f'{date_str} {key} 與當次原始 Excel 解析不一致')
+    raise RuntimeError('當次 Excel 重新解析已完成，但 Word 逐頁渲染與完整人員驗證尚未完成，禁止正式輸出')
 
 
 @app.route('/api/generate', methods=['POST'])
