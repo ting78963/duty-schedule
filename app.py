@@ -298,13 +298,13 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
-    # 全隊大表第 2 列 AW:BV 是內勤姓名；第 3 列起同欄為每日狀態。
+    # 全隊大表第 2 列 AW:AZ 是指定外勤、BA:BV 是內勤姓名；第 3 列起同欄為每日狀態。
     # BQ:BS 不是固定代號名冊，不能拿每日值誤判為人員代號。
     fixed_roster = {}
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
         internal_cols = {}
-        for col in range(49, 75):  # AW:BV
+        for col in range(53, 75):  # BA:BV; AW:AZ already covered by external staff roster
             name = str(ws_all.cell(2, col).value or '').strip()
             if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
                 internal_cols[col] = name
@@ -347,7 +347,7 @@ def parse_excel(file_bytes):
                     day_data['on_duty'].append(person)
 
     # ── 全隊大表：主管督勤欄（依職稱，不依外勤姓名） ──
-    # Excel's fixed roster (BQ:BS) is authoritative for internal code/name.
+    # BQ:BS are daily-status cells, not a fixed code/name directory.
     supervisor_titles = ('隊長', '林副隊長', '陳副隊長', '李秘書', '姚組長', '翁組長')
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
