@@ -683,12 +683,39 @@ def delete_staff(code):
     sb_delete('staff', 'code', code)
     return jsonify({'ok': True})
 
+def validate_monthly_data_before_write(monthly_data):
+    """Fail closed before any roster or daily schedule is written to Supabase."""
+    if not isinstance(monthly_data, dict) or not monthly_data:
+        raise ValueError('Excel 沒有可用的每日勤務資料，未更新資料庫')
+    for date_str, day in monthly_data.items():
+        if not isinstance(day, dict) or day.get('date_str') != date_str:
+            raise ValueError(f'{date_str} 日期資料不一致')
+        people = list(day.get('on_duty') or []) + list(day.get('off_duty') or [])
+        if not people:
+            raise ValueError(f'{date_str} 沒有人員資料')
+        seen_codes = set()
+        for person in people:
+            code = person.get('ban')
+            if code is None:
+                continue  # Unnumbered new staff remain unassigned.
+            if not isinstance(code, int) or not 1 <= code <= 99:
+                raise ValueError(f'{date_str} 人員代號異常：{code}')
+            if code in seen_codes:
+                raise ValueError(f'{date_str} 人員代號 {code} 重複，未更新資料庫')
+            seen_codes.add(code)
+            if not str(person.get('name') or '').strip():
+                raise ValueError(f'{date_str} 代號 {code} 缺少姓名')
+        if not day.get('weekday') or not isinstance(day.get('is_holiday'), bool):
+            raise ValueError(f'{date_str} 日期或假日欄位異常')
+
+
 @app.route('/api/parse-excel', methods=['POST'])
 def parse_excel_api():
     f = request.files.get('file')
     if not f: return jsonify({'error': '未上傳檔案'}), 400
     try:
         result = parse_excel(f.read())
+        validate_monthly_data_before_write(result['monthlyData'])
         # Sync authoritative fixed roster before publishing daily schedules.
         changed_codes = sync_fixed_roster(result['fixedRoster'])
         result['rosterUpdatedCodes'] = changed_codes
