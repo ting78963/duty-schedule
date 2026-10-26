@@ -407,10 +407,24 @@ def parse_excel(file_bytes):
                 if not status:
                     continue
                 person = {'name': name, 'ban': code, 'status': status}
-                # Ensure the same supervisor never appears twice.
-                day_data['on_duty'] = [p for p in day_data['on_duty'] if p.get('ban') != code]
-                day_data['off_duty'] = [p for p in day_data['off_duty'] if p.get('ban') != code]
-                day_data['off_duty'].append(person)
+                # Codes 35/43 are already in the internal roster. Reconcile
+                # the supervisor status with that same person, never add a
+                # second record or silently discard a mismatched name.
+                existing = [p for p in day_data['on_duty'] + day_data['off_duty']
+                            if p.get('ban') == code or p.get('name') == name]
+                if any(p.get('ban') != code or p.get('name') != name for p in existing):
+                    raise ValueError(f'{date_str} 主管 {name}({code}) 與當日名冊姓名或代號衝突')
+                if len(existing) > 1:
+                    raise ValueError(f'{date_str} 主管 {name}({code}) 重複出現')
+                if existing:
+                    existing[0]['status'] = status
+                    day_data['on_duty'] = [p for p in day_data['on_duty']
+                                           if p is not existing[0]]
+                    day_data['off_duty'] = [p for p in day_data['off_duty']
+                                            if p is not existing[0]]
+                    day_data['off_duty'].append(existing[0])
+                else:
+                    day_data['off_duty'].append(person)
 
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
