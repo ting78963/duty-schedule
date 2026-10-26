@@ -403,7 +403,7 @@ def parse_excel(file_bytes):
                 else:
                     status = raw
                 person = {'name': name, 'ban': approved_internal_codes.get(name),
-                          'status': status,
+                          'status': status, 'sourceSheet': '全隊大表',
                           'sourceColumn': openpyxl.utils.get_column_letter(col)}
                 if status in ('輪休', '休假', '公假') or (
                         '假' in status and '停休' not in status):
@@ -832,6 +832,11 @@ def validate_monthly_data_before_write(monthly_data):
                 raise ValueError(f'{date_str} 外勤應有 20 人，實際 {len(external_codes)} 人')
             if sorted(c for c in external_codes if isinstance(c, int)) != list(range(1, 21)):
                 raise ValueError(f'{date_str} 外勤輪動及固定代號不完整')
+        internal_people = [p for p in people
+                           if p.get('sourceSheet') == '全隊大表']
+        if internal_people and len(internal_people) != 21:
+            raise ValueError(
+                f'{date_str} 全隊大表 BA:BV 應有 21 人，實際 {len(internal_people)} 人')
         seen_codes = set()
         seen_names = set()
         for person in people:
