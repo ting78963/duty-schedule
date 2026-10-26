@@ -718,19 +718,41 @@ def validate_monthly_data_before_write(monthly_data):
         if not people:
             raise ValueError(f'{date_str} 沒有人員資料')
         seen_codes = set()
+        seen_names = set()
         for person in people:
+            if not isinstance(person, dict):
+                raise ValueError(f'{date_str} 人員資料格式異常')
+            name = str(person.get('name') or '').strip()
+            if not name:
+                raise ValueError(f'{date_str} 發現缺少姓名的人員')
+            if name in seen_names:
+                raise ValueError(f'{date_str} 姓名 {name} 重複出現，停止產檔')
+            seen_names.add(name)
             code = person.get('ban')
             if code is None:
-                continue  # Unnumbered new staff remain unassigned.
-            if not isinstance(code, int) or not 1 <= code <= 99:
+                continue  # Unnumbered newcomers stay unnumbered.
+            if type(code) is not int or not 1 <= code <= 99:
                 raise ValueError(f'{date_str} 人員代號異常：{code}')
             if code in seen_codes:
-                raise ValueError(f'{date_str} 人員代號 {code} 重複，未更新資料庫')
+                raise ValueError(f'{date_str} 人員代號 {code} 重複，停止產檔')
             seen_codes.add(code)
-            if not str(person.get('name') or '').strip():
-                raise ValueError(f'{date_str} 代號 {code} 缺少姓名')
-        if not day.get('weekday') or not isinstance(day.get('is_holiday'), bool):
-            raise ValueError(f'{date_str} 日期或假日欄位異常')
+            verified_supervisors = {
+                35: '姚宗志', 43: '翁水成', 60: '李安景',
+                61: '陳彥文', 62: '林志明', 63: '張瑞忠',
+            }
+            if code in verified_supervisors and name != verified_supervisors[code]:
+                raise ValueError(f'{date_str} 主管代號 {code} 與姓名 {name} 不符')
+        match = re.fullmatch(r'(\\d+)年(\\d+)月(\\d+)日', date_str)
+        if not match:
+            raise ValueError(f'{date_str} 日期格式異常')
+        roc_year, month, day_number = map(int, match.groups())
+        try:
+            date_obj = datetime(roc_year + 1911, month, day_number)
+        except ValueError as exc:
+            raise ValueError(f'{date_str} 日期不存在') from exc
+        expected_weekday = ['一', '二', '三', '四', '五', '六', '日'][date_obj.weekday()]
+        if day.get('weekday') != expected_weekday or not isinstance(day.get('is_holiday'), bool):
+            raise ValueError(f'{date_str} 星期或假日欄位異常')
 
 
 @app.route('/api/parse-excel', methods=['POST'])
