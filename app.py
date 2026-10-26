@@ -280,7 +280,9 @@ def parse_excel(file_bytes):
                     if not status:
                         status = raw  # 保留其他假別及常訓等備考
 
-            person = {'name': name, 'ban': ban, 'status': status}
+            person = {'name': name, 'ban': ban, 'status': status,
+                      'sourceSheet': '外勤',
+                      'sourceColumn': openpyxl.utils.get_column_letter(col)}
             # Any kind of leave is off-duty; 停休 means leave was cancelled.
             off_statuses = ['輪','優','休','補','公']
             is_leave = (status in off_statuses or ('假' in str(status) and '停休' not in str(status)))
@@ -821,6 +823,15 @@ def validate_monthly_data_before_write(monthly_data):
         people = list(day.get('on_duty') or []) + list(day.get('off_duty') or [])
         if not people:
             raise ValueError(f'{date_str} 沒有人員資料')
+        # The 20 external names must be present exactly once each day.
+        # Four designated external staff are reconciled, never appended.
+        external_codes = [p.get('ban') for p in people
+                          if p.get('sourceSheet') == '外勤']
+        if external_codes:
+            if len(external_codes) != 20:
+                raise ValueError(f'{date_str} 外勤應有 20 人，實際 {len(external_codes)} 人')
+            if sorted(c for c in external_codes if isinstance(c, int)) != list(range(1, 21)):
+                raise ValueError(f'{date_str} 外勤輪動及固定代號不完整')
         seen_codes = set()
         seen_names = set()
         for person in people:
