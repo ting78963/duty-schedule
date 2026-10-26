@@ -738,8 +738,44 @@ def parse_excel_api():
     f = request.files.get('file')
     if not f: return jsonify({'error': '未上傳檔案'}), 400
     try:
-        result = parse_excel(f.read())
+        excel_bytes = f.read(12 * 1024 * 1024 + 1)
+        if len(excel_bytes) > 12 * 1024 * 1024:
+            raise ValueError('Excel 超過 12MB 上限')
+        if not zipfile.is_zipfile(io.BytesIO(excel_bytes)):
+            raise ValueError('Excel 不是有效的 xlsx 檔案')
+        result = parse_excel(excel_bytes)
         validate_monthly_data_before_write(result['monthlyData'])
+        # The official generator must reread original Excel on every run.
+        # Do not publish parsed rows if the authoritative source cannot be
+        # saved in the private bucket first.
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise RuntimeError('無法永久儲存原始 Excel，停止匯入')
+        token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
+        if not token or not hmac.compare_digest(request.headers.get('X-Template-Upload-Token', ''), token):
+            raise PermissionError('上傳原始全隊大表需要管理授權')
+        dates = list(result['monthlyData'])
+        months = {tuple(map(int, m.groups()[:2])) for date in dates
+                  if (m := re.fullmatch(r'(\\d+)年(\\d+)月(\\d+)日', date))}
+        if len(months) != 1 or len(dates) != len(result['monthlyData']):
+            raise ValueError('Excel 日期跨月或格式異常，停止匯入')
+        roc_year, month = next(iter(months))
+        object_name = f'source_excel/{roc_year + 1911}-{month:02d}.xlsx'
+        url = f'{SUPABASE_URL}/storage/v1/object/{TEMPLATE_BUCKET}/{object_name}'
+        headers = {
+            'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'x-upsert': 'true'
+        }
+        uploaded = req.post(url, headers=headers, data=excel_bytes, timeout=40)
+        if uploaded.status_code not in (200, 201):
+            raise RuntimeError(f'原始 Excel 儲存失敗 HTTP {uploaded.status_code}，停止匯入')
+        source_check = req.get(
+            f'{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{object_name}',
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            timeout=40
+        )
+        if source_check.status_code != 200 or source_check.content != excel_bytes:
+            raise RuntimeError('原始 Excel 回讀驗證失敗，停止匯入')
         # Sync authoritative fixed roster before publishing daily schedules.
         changed_codes = sync_fixed_roster(result['fixedRoster'])
         result['rosterUpdatedCodes'] = changed_codes
