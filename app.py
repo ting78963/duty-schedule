@@ -311,6 +311,49 @@ def parse_excel(file_bytes):
             if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
                 internal_cols[col] = name
                 staff_from_excel[name] = True
+        # AW:AZ are the four designated external staff already parsed from
+        # the 外勤 sheet. Merge their same-day status by name, never append.
+        for row in range(3, ws_all.max_row + 1):
+            raw_date = ws_all.cell(row, 47).value
+            if isinstance(raw_date, datetime):
+                d = raw_date
+            elif isinstance(raw_date, (int, float)) and 30000 <= raw_date <= 80000:
+                d = openpyxl.utils.datetime.from_excel(raw_date, wb.epoch)
+            else:
+                continue
+            key = f'{d.year-1911}年{d.month}月{d.day}日'
+            if key not in monthly_data:
+                continue
+            day_data = monthly_data[key]
+            for col in range(49, 53):
+                name = str(ws_all.cell(2, col).value or '').strip()
+                raw = str(ws_all.cell(row, col).value or '').strip()
+                if not raw:
+                    continue
+                matches = [p for p in day_data['on_duty'] + day_data['off_duty']
+                           if p.get('name') == name]
+                if len(matches) != 1:
+                    raise ValueError(f'{key} 指定外勤 {name} 在外勤名冊找不到唯一紀錄')
+                person = matches[0]
+                if '停休' in raw or '△' in raw or 'Δ' in raw:
+                    status = '停休'
+                elif raw in ('輪', '輪休'):
+                    status = '輪休'
+                elif raw in ('休', '補', '優') or '休假' in raw or '補休' in raw or raw.endswith('休'):
+                    status = '休假'
+                elif raw in ('公', '公假') or '公假' in raw:
+                    status = '公假'
+                else:
+                    status = raw
+                person['status'] = status
+                person['sourceColumn'] = openpyxl.utils.get_column_letter(col)
+                day_data['on_duty'] = [p for p in day_data['on_duty'] if p is not person]
+                day_data['off_duty'] = [p for p in day_data['off_duty'] if p is not person]
+                if status in ('輪休', '休假', '公假') or ('假' in status and '停休' not in status):
+                    day_data['off_duty'].append(person)
+                else:
+                    day_data['on_duty'].append(person)
+
         # Approved Word template's fixed name/code directory. Never derive
         # codes from worksheet column position. Names absent from this directory
         # (e.g. newcomer 周彥璋) remain unnumbered.
