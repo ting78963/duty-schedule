@@ -415,22 +415,37 @@ def parse_excel(file_bytes):
         for row in range(1, ws_all.max_row+1):
             date_val = ws_all.cell(row=row, column=1).value
             ao_val = ws_all.cell(row=row, column=41).value
-            if date_val and ao_val and '取締' in str(ao_val):
-                sake_time = parse_sake_time(ao_val)
-                if sake_time:
-                    if isinstance(date_val, datetime):
-                        date_obj = date_val
-                    else:
-                        try:
-                            date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
-                        except:
+            # AO can contain only the hour range (e.g. 18-22); the
+            # literal word 取締 is not required. Date may be a day number.
+            sake_time = parse_sake_time(ao_val)
+            if not date_val or not sake_time:
+                continue
+            if isinstance(date_val, datetime):
+                date_obj = date_val
+            else:
+                try:
+                    date_obj = datetime.strptime(str(date_val)[:10], '%Y-%m-%d')
+                except (TypeError, ValueError):
+                    try:
+                        day_number = int(date_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if 30000 <= day_number <= 80000:
+                        date_obj = openpyxl.utils.datetime.from_excel(day_number, wb.epoch)
+                    elif 1 <= day_number <= 31:
+                        matches = [key for key in monthly_data if key.endswith(f'月{day_number}日')]
+                        if len(matches) != 1:
                             continue
-                    roc_year = date_obj.year - 1911
-                    date_str = f'{roc_year}年{date_obj.month}月{date_obj.day}日'
-                    sake_by_date[date_str] = sake_time
-                    if date_str in monthly_data:
-                        monthly_data[date_str]['has_sake'] = True
-                        monthly_data[date_str]['sake_times'] = [sake_time]
+                        date_str = matches[0]
+                        date_obj = None
+                    else:
+                        continue
+            if date_obj is not None:
+                date_str = f'{date_obj.year - 1911}年{date_obj.month}月{date_obj.day}日'
+            if date_str in monthly_data:
+                sake_by_date[date_str] = sake_time
+                monthly_data[date_str]['has_sake'] = True
+                monthly_data[date_str]['sake_times'] = [sake_time]
 
     return {
         'monthlyData': monthly_data,
