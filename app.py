@@ -311,6 +311,30 @@ def parse_excel(file_bytes):
             if 21 <= code <= 54:
                 raw_name = roster_sheet.cell(rr, 71).value
                 fixed_roster[code] = str(raw_name or '').strip()
+    # The daily parser currently reads the external roster first. Never
+    # publish a supposedly complete daily roster while fixed internal staff
+    # (21-54) are absent from the day's parsed personnel. This deliberately
+    # fails closed until daily internal-status extraction is implemented
+    # against the approved workbook layout.
+    if fixed_roster:
+        for date_str, day_data in monthly_data.items():
+            people = day_data['on_duty'] + day_data['off_duty']
+            by_code = {p.get('ban'): p.get('name') for p in people
+                       if p.get('ban') is not None}
+            missing = [(code, name) for code, name in fixed_roster.items()
+                       if name and code not in by_code]
+            mismatched = [(code, name, by_code[code])
+                          for code, name in fixed_roster.items()
+                          if name and code in by_code and by_code[code] != name]
+            if missing or mismatched:
+                missing_text = ', '.join(f'{code}:{name}' for code, name in missing[:8])
+                mismatch_text = ', '.join(
+                    f'{code}:{name}!={actual}' for code, name, actual in mismatched[:8])
+                raise ValueError(
+                    f'{date_str} 內勤 21-54 尚未完整從每日 Excel 解析；'
+                    f'缺少 [{missing_text}]，姓名衝突 [{mismatch_text}]。'
+                    '禁止將不完整名冊儲存或生成勤務表'
+                )
     # The workbook does not define the supervisor/secretary 60-63 mapping.
     # Keep those separately verified records, never infer them from row order.
 
