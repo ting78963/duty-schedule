@@ -805,10 +805,41 @@ def get_duty_month(year, month):
     })
     return jsonify(data)
 
+def verified_generation_input(payload):
+    """Never trust client-provided personnel, dates or template flags for output.
+
+    This is an interim consistency gate. Full eleven-step verification additionally
+    requires the source Excel bytes and a rendered Word inspection; until those
+    exist, generation must remain blocked rather than be called verified.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError('生成資料格式不正確')
+    date_str = payload.get('rocDate')
+    if not isinstance(date_str, str) or not re.fullmatch(r'\\d+年\\d+月\\d+日', date_str):
+        raise ValueError('缺少有效的勤務日期')
+    if not SUPABASE_URL:
+        raise RuntimeError('無法讀取已儲存的勤務來源')
+    rows = sb_get('monthly_duty', params={'date_str': f'eq.{date_str}'})
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise ValueError(f'{date_str} 找不到唯一的當日 Excel 解析資料')
+    row = rows[0]
+    expected = {
+        'rocDate': row['roc_date'], 'weekday': row['weekday'],
+        'isHoliday': row['is_holiday'], 'hasSake': row['has_sake'],
+        'sakeTimes': row['sake_times'], 'onDuty': row['on_duty'],
+        'offDuty': row['off_duty'],
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise ValueError(f'{date_str} {key} 與已儲存的 Excel 資料不一致，停止產檔')
+    raise RuntimeError('正式 11 步流程尚未完成：缺少每次生成的原始 Excel 重讀及 Word 渲染驗證，禁止交付未驗收檔案')
+
+
 @app.route('/api/generate', methods=['POST'])
 def generate_api():
     data = request.json
     try:
+        verified_generation_input(data)
         buf = generate_word(data)
         fname = f'勤務表_{data.get("rocDate","")}.docx'
         return send_file(buf, as_attachment=True, download_name=fname,
@@ -823,6 +854,7 @@ def generate_batch():
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
             try:
+                verified_generation_input(d)
                 buf = generate_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
