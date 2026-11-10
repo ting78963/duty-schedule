@@ -1,7 +1,8 @@
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file, render_template, g, has_request_context
+from word_validation import table_row_cells, validate_generated_word
 from docx import Document
 from lxml import etree
-import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac, uuid
+import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac, uuid, gc
 from datetime import datetime
 
 app = Flask(__name__)
@@ -46,7 +47,8 @@ ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 TEMPLATE_BUCKET = 'duty-templates'
 TEMPLATE_NAMES = {
     '平日': 'tmpl_平日.docx', '假日': 'tmpl_假日.docx',
-    '平日取酒': 'tmpl_平日取酒.docx', '假日取酒': 'tmpl_假日取酒.docx'
+    '平日取酒': 'tmpl_平日取酒.docx', '假日取酒': 'tmpl_假日取酒.docx',
+    '平日取酒18–22': 'tmpl_平日取酒18-22.docx',
 }
 # Supabase Storage object keys use stable ASCII names; user-facing Word filenames remain Chinese.
 TEMPLATE_STORAGE_NAMES = {
@@ -54,10 +56,29 @@ TEMPLATE_STORAGE_NAMES = {
     'tmpl_假日.docx': 'holiday.docx',
     'tmpl_平日取酒.docx': 'weekday_sake.docx',
     'tmpl_假日取酒.docx': 'holiday_sake.docx',
+    'tmpl_平日取酒18-22.docx': 'weekday_sake_18_22.docx',
+}
+SAKE_TEMPLATE_TYPES = {
+    (False, ((19, 23),)): '平日取酒',
+    (False, ((18, 22),)): '平日取酒18–22',
+    (True, ((18, 22),)): '假日取酒',
 }
 DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 def template_bytes(tmpl_path):
+    cache = g.get('batch_template_bytes') if has_request_context() else None
+    if cache is None:
+        payload = _read_template_bytes(tmpl_path)
+    else:
+        if tmpl_path not in cache:
+            cache[tmpl_path] = _read_template_bytes(tmpl_path)
+        payload = cache[tmpl_path]
+    if has_request_context():
+        g.generation_template = (tmpl_path, payload)
+    return payload
+
+
+def _read_template_bytes(tmpl_path):
     """Read the uploaded private Supabase template first, then use bundled file if no upload exists."""
     name = os.path.basename(tmpl_path)
     storage_name = TEMPLATE_STORAGE_NAMES.get(name, name)
@@ -73,8 +94,11 @@ def template_bytes(tmpl_path):
             return response.content
         if response.status_code != 404:
             raise RuntimeError(f'無法讀取已上傳的範本：HTTP {response.status_code}')
-    with open(tmpl_path, 'rb') as f:
-        return f.read()
+    try:
+        with open(tmpl_path, 'rb') as f:
+            return f.read()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f'缺少 Word 範本：{storage_name}') from exc
 
 def validate_template_bytes(payload):
     if len(payload) > 5 * 1024 * 1024:
@@ -95,22 +119,30 @@ def validate_template_bytes(payload):
         raise ValueError('Word範本欄位數不符合勤務表')
     code_col = len(table.columns) - 5
     name_col = len(table.columns) - 1
-    codes = {int(row.cells[code_col].text.strip()) for row in table.rows
-             if row.cells[code_col].text.strip().isdigit()}
+    rows = table_row_cells(table)
+    codes = {int(row[code_col].text.strip()) for row in rows
+             if row[code_col].text.strip().isdigit()}
     if not {19, 29}.issubset(codes):
         raise ValueError('Word範本缺少正式代號19或29')
-    for code, label in ((19, '休(補)假'), (29, '公假')):
-        matching = [row for row in table.rows
-                    if row.cells[code_col].text.strip() == str(code)]
-        if not matching or label not in matching[0].cells[name_col].text:
-            raise ValueError(f'代號{code}同排必須保留「{label}」標題')
+    # The approved weekday-sake template places its leave headings beside
+    # codes 15/26; other approved templates use 19/29. Validate the actual
+    # leave column, not a cross-column row coincidence.
+    leave_labels = [row[name_col].text.strip() for row in rows]
+    for label in ('輪   休', '休(補)假', '公假'):
+        if sum(text == label for text in leave_labels) != 1:
+            raise ValueError(f'Word範本必須保留唯一「{label}」標題')
     return doc
 
-def get_tmpl(is_holiday, has_sake):
-    if is_holiday and has_sake: return os.path.join(ASSETS, 'tmpl_假日取酒.docx')
-    if is_holiday:              return os.path.join(ASSETS, 'tmpl_假日.docx')
-    if has_sake:                return os.path.join(ASSETS, 'tmpl_平日取酒.docx')
-    return os.path.join(ASSETS, 'tmpl_平日.docx')
+def get_tmpl(is_holiday, has_sake, sake_times=(), roc_date=''):
+    if not has_sake:
+        return os.path.join(ASSETS, TEMPLATE_NAMES['假日' if is_holiday else '平日'])
+    times = tuple(sorted((t['start'], t['end']) for t in sake_times))
+    template_type = SAKE_TEMPLATE_TYPES.get((is_holiday, times))
+    if template_type is None:
+        day_type = '假日' if is_holiday else '平日'
+        hours = '、'.join(f'{start:02d}–{end:02d}' for start, end in times) or '未提供'
+        raise ValueError(f'{roc_date}（{day_type}）沒有對應的已驗收取締酒駕範本（Excel：{hours}）')
+    return os.path.join(ASSETS, TEMPLATE_NAMES[template_type])
 
 def get_cols(is_holiday):
     if is_holiday:
@@ -145,19 +177,89 @@ def set_cell(cell, text, size=None, color='000000'):
             return
     cell.paragraphs[0].add_run(text)
 
-def set_cell_preserving_format(cell, text):
-    """Replace visible text without changing approved Word run/paragraph formatting."""
+def set_cell_preserving_format(cell, text, new_run_rpr=None):
+    """Edit existing runs in place; inherit cell formatting for a new run."""
     text = str(text) if text is not None else ''
-    paragraphs = cell.paragraphs
-    if not paragraphs:
+    if cell.text == text:
         return
-    first = True
-    for para in paragraphs:
+    runs = [run for para in cell.paragraphs for run in para.runs]
+    if runs:
+        # Keep text in its original run slots, including differently styled
+        # date fragments. Empty leading runs must not absorb styled text.
+        occupied = [i for i, run in enumerate(runs) if run.text]
+        last = occupied[-1] if occupied else 0
+        remaining = text
+        for i, run in enumerate(runs):
+            length = len(run.text)
+            value = remaining if i == last else remaining[:length] if i < last else ''
+            remaining = remaining[len(value):]
+            if run.text != value:
+                run.text = value
+    elif text:
+        para = cell.paragraphs[0]
+        run = para.add_run(text)
+        paragraph_rpr = para._p.find(f'{{{ns}}}pPr/{{{ns}}}rPr')
+        if paragraph_rpr is not None:
+            run._r.insert(0, copy.deepcopy(paragraph_rpr))
+        elif new_run_rpr is not None:
+            run._r.insert(0, copy.deepcopy(new_run_rpr))
+        # New text inherits the original cell's size/weight. Only the required
+        # font family is explicit when the empty cell has no existing run.
+        rpr = run._r.get_or_add_rPr()
+        fonts = rpr.find(f'{{{ns}}}rFonts')
+        if fonts is None:
+            fonts = etree.SubElement(rpr, f'{{{ns}}}rFonts')
+        for attr in ('ascii', 'hAnsi', 'eastAsia', 'cs'):
+            fonts.set(f'{{{ns}}}{attr}', '標楷體')
+
+
+def apply_directory_text_format(cell, points):
+    """Apply the approved column format without replacing paragraphs or runs.
+
+    Accepted 11/6 directory numbers/names use 12pt regular Kai. Use black
+    explicitly so stale template blue/theme colors cannot follow new text.
+    """
+    from docx.shared import Pt, RGBColor
+    for para in cell.paragraphs:
         for run in para.runs:
-            run.text = text if first else ''
-            first = False
-    if first:
-        paragraphs[0].add_run(text)
+            run.font.name = '標楷體'
+            run.font.size = Pt(points)
+            run.bold = False
+            run.font.color.rgb = RGBColor(0, 0, 0)
+            rpr = run._r.get_or_add_rPr()
+            rpr.rFonts.set(f'{{{ns}}}eastAsia', '標楷體')
+            for tag, value in (('szCs', str(points * 2)), ('bCs', '0')):
+                node = rpr.find(f'{{{ns}}}{tag}')
+                if node is None:
+                    node = etree.SubElement(rpr, f'{{{ns}}}{tag}')
+                node.set(f'{{{ns}}}val', value)
+
+
+def clear_daily_hand_entry_codes(row_cells, code_col):
+    """Clear personnel numbers only in time rows left of the directory.
+
+    Template vehicle IDs (e.g. 908, BEW-7085), road headings, time labels,
+    and duty text are outside this predicate. Merged cells are edited once.
+    """
+    seen = set()
+    for cells in row_cells:
+        if not re.fullmatch(r'\d{1,2}[－\-–]\d{1,2}', cells[0].text.strip()):
+            continue
+        for cell in cells[1:code_col]:
+            if cell._tc in seen:
+                continue
+            seen.add(cell._tc)
+            text = cell.text.strip()
+            numbers = re.findall(r'\d+', text)
+            if (numbers and re.fullmatch(r'[\d\s()（）,，、+＋/／\-－]+', text)
+                    and all(1 <= int(number) <= 63 for number in numbers)):
+                set_cell_preserving_format(cell, '')
+
+
+# Persistent annotation confirmed in all four approved templates and the
+# accepted 11/6–11/8 documents; the Excel BB daily cells do not encode it.
+# Match both name and code so a replacement employee cannot inherit it.
+PERSISTENT_STAFF_REMARKS = {}
 
 
 def set_red_border_cells(cells):
@@ -202,6 +304,13 @@ def parse_sake_time(cell_value):
     m = re.search(r'(\d{1,2})-(\d{1,2})', str(cell_value))
     if m: return {'start': int(m.group(1)), 'end': int(m.group(2))}
     return None
+
+def is_leave_status(status):
+    status = str(status or '')
+    if any(x in status for x in ('停休', '△', 'Δ', '假日交督', '假日 交督', '留職停薪')):
+        return False
+    return status in ('輪', '輪休', '優', '休', '補', '公') or '假' in status
+
 
 def parse_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
@@ -285,7 +394,7 @@ def parse_excel(file_bytes):
                       'sourceColumn': openpyxl.utils.get_column_letter(col)}
             # Any kind of leave is off-duty; 停休 means leave was cancelled.
             off_statuses = ['輪','優','休','補','公']
-            is_leave = (status in off_statuses or ('假' in str(status) and '停休' not in str(status)))
+            is_leave = is_leave_status(status)
             if is_leave:
                 off_duty.append(person)
             else:
@@ -302,59 +411,17 @@ def parse_excel(file_bytes):
             'off_duty': sorted(off_duty, key=lambda x: x['ban'] or 99),
         }
 
-    # 全隊大表第 2 列 AW:AZ 是指定外勤、BA:BV 是內勤姓名；第 3 列起同欄為每日狀態。
-    # BQ:BS 不是固定代號名冊，不能拿每日值誤判為人員代號。
+    # 全隊大表 AW:BV 全部是內勤；AW:AZ 為 50–53，不是外勤 17–20。
+    # 外勤 17–20 已由外勤工作表 AI:AO 的姓名、代號及每日狀態解析。
     fixed_roster = {}
     if '全隊大表' in wb.sheetnames:
         ws_all = wb['全隊大表']
         internal_cols = {}
-        for col in range(53, 75):  # BA:BV; AW:AZ already covered by external staff roster
+        for col in range(49, 75):  # AW:BV; BI is an empty separator.
             name = str(ws_all.cell(2, col).value or '').strip()
             if 2 <= len(name) <= 5 and name not in ('日期', '星期'):
                 internal_cols[col] = name
                 staff_from_excel[name] = True
-        # AW:AZ are the four designated external staff already parsed from
-        # the 外勤 sheet. Merge their same-day status by name, never append.
-        for row in range(3, ws_all.max_row + 1):
-            raw_date = ws_all.cell(row, 47).value
-            if isinstance(raw_date, datetime):
-                d = raw_date
-            elif isinstance(raw_date, (int, float)) and 30000 <= raw_date <= 80000:
-                d = openpyxl.utils.datetime.from_excel(raw_date, wb.epoch)
-            else:
-                continue
-            key = f'{d.year-1911}年{d.month}月{d.day}日'
-            if key not in monthly_data:
-                continue
-            day_data = monthly_data[key]
-            for col in range(49, 53):
-                name = str(ws_all.cell(2, col).value or '').strip()
-                raw = str(ws_all.cell(row, col).value or '').strip()
-                if not raw:
-                    continue
-                matches = [p for p in day_data['on_duty'] + day_data['off_duty']
-                           if p.get('name') == name]
-                if len(matches) != 1:
-                    raise ValueError(f'{key} 指定外勤 {name} 在外勤名冊找不到唯一紀錄')
-                person = matches[0]
-                if '停休' in raw or '△' in raw or 'Δ' in raw:
-                    status = '停休'
-                elif raw in ('輪', '輪休'):
-                    status = '輪休'
-                elif raw in ('休', '補', '優') or '休假' in raw or '補休' in raw or raw.endswith('休'):
-                    status = '休假'
-                elif raw in ('公', '公假') or '公假' in raw:
-                    status = '公假'
-                else:
-                    status = raw
-                person['status'] = status
-                person['sourceColumn'] = openpyxl.utils.get_column_letter(col)
-                day_data['on_duty'] = [p for p in day_data['on_duty'] if p is not person]
-                day_data['off_duty'] = [p for p in day_data['off_duty'] if p is not person]
-                if status in ('輪休', '休假', '公假') or ('假' in status and '停休' not in status):
-                    day_data['off_duty'].append(person)
-                else:
-                    day_data['on_duty'].append(person)
 
         # Approved Word template's fixed name/code directory. Never derive
         # codes from worksheet column position. Names absent from this directory
@@ -405,8 +472,7 @@ def parse_excel(file_bytes):
                 person = {'name': name, 'ban': approved_internal_codes.get(name),
                           'status': status, 'sourceSheet': '全隊大表',
                           'sourceColumn': openpyxl.utils.get_column_letter(col)}
-                if status in ('輪休', '休假', '公假') or (
-                        '假' in status and '停休' not in status):
+                if is_leave_status(status):
                     day_data['off_duty'].append(person)
                 else:
                     day_data['on_duty'].append(person)
@@ -433,7 +499,7 @@ def parse_excel(file_bytes):
         for header_row in range(1, min(ws_all.max_row, 50) + 1):
             found = {}
             for col in range(1, ws_all.max_column + 1):
-                label = str(ws_all.cell(header_row, col).value or '').replace(' ', '').replace('　', '').replace('\\n', '')
+                label = re.sub(r'\s+', '', str(ws_all.cell(header_row, col).value or ''))
                 if label == '長隊':
                     label = '隊長'
                 if label in supervisor_titles:
@@ -447,7 +513,8 @@ def parse_excel(file_bytes):
         if not supervisor_cols:
             raise ValueError('全隊大表未找到可核對的主管督勤表頭，拒絕略過主管資料')
         for row in range((supervisor_header_row or ws_all.max_row) + 1, ws_all.max_row + 1):
-            date_val = ws_all.cell(row, 47).value
+            # 督勤區日期在 A 欄；AU 是上半部內勤區日期。
+            date_val = ws_all.cell(row, 1).value
             if isinstance(date_val, datetime):
                 date_obj = date_val
             else:
@@ -478,8 +545,6 @@ def parse_excel(file_bytes):
             day_data = monthly_data[date_str]
             for title, col in supervisor_cols.items():
                 raw = str(ws_all.cell(row, col).value or '').strip()
-                if not raw:
-                    continue
                 name = supervisor_names[title]
                 # Verified supervisor code crosswalk supplied for this schedule.
                 # Excel remains authoritative for each day's duty/leave status.
@@ -495,15 +560,22 @@ def parse_excel(file_bytes):
                         f'與正式對照代號 {code} 不符'
                     )
                 status = ''
-                if '公假' in raw or '公休' in raw:
+                if '停休' in raw or '△' in raw or 'Δ' in raw:
+                    status = '停休'
+                elif '公假' in raw or '公休' in raw or raw == '公':
                     status = '公假'
                 elif '輪休' in raw or raw == '輪':
                     status = '輪休'
-                elif '休假' in raw or raw in ('休', '優', '補'):
+                elif '休假' in raw or '補休' in raw or raw in ('休', '優', '補'):
                     status = '休假'
+                elif '假' in raw:
+                    status = raw
                 if not status:
-                    continue
-                person = {'name': name, 'ban': code, 'status': status}
+                    status = raw
+                person = {'name': name, 'ban': code, 'status': status,
+                          'remarks': raw, 'sourceSheet': '全隊大表督勤',
+                          'sourceColumn': openpyxl.utils.get_column_letter(col),
+                          'sourceRow': row}
                 # Codes 35/43 are already in the internal roster. Reconcile
                 # the supervisor status with that same person, never add a
                 # second record or silently discard a mismatched name.
@@ -514,14 +586,19 @@ def parse_excel(file_bytes):
                 if len(existing) > 1:
                     raise ValueError(f'{date_str} 主管 {name}({code}) 重複出現')
                 if existing:
+                    if not raw:
+                        continue  # 空白督勤不覆寫內勤原有狀態。
                     existing[0]['status'] = status
+                    existing[0]['supervisorSource'] = dict(person)
                     day_data['on_duty'] = [p for p in day_data['on_duty']
                                            if p is not existing[0]]
                     day_data['off_duty'] = [p for p in day_data['off_duty']
                                             if p is not existing[0]]
-                    day_data['off_duty'].append(existing[0])
+                    target = 'off_duty' if is_leave_status(status) else 'on_duty'
+                    day_data[target].append(existing[0])
                 else:
-                    day_data['off_duty'].append(person)
+                    target = 'off_duty' if is_leave_status(status) else 'on_duty'
+                    day_data[target].append(person)
 
     # ── 全隊大表：取締酒駕 ──────────────────────────────
     if '全隊大表' in wb.sheetnames:
@@ -627,15 +704,15 @@ def generate_word(data):
     has_sake   = data.get('hasSake', False)
     sake_times = data.get('sakeTimes', [])
 
-    tmpl_path = get_tmpl(is_holiday, has_sake)
+    tmpl_path = get_tmpl(is_holiday, has_sake, sake_times, roc_date)
     # Supabase is the authoritative template store. A local bundled copy is optional.
     # template_bytes() handles the Storage lookup and local fallback.
 
     # Column mapping is resolved after loading the document.
 
     lx, bx, gg = [], [], []
-    # All numbered personnel, including internal staff and supervisors, belong
-    # in the daily right-hand leave directory. Never reuse yesterday's entries.
+    # Right-hand rotating leave is code-based: 1–20, 50–53, 60–63 only.
+    # Other leave categories and every person's own remarks are unchanged.
     seen_leave_codes = set()
     for person in sorted(off_duty, key=lambda x: x.get('ban') if isinstance(x.get('ban'), int) else 999):
         ban = person.get('ban')
@@ -648,7 +725,8 @@ def generate_word(data):
         if '停休' in st:
             continue
         if st in ('輪', '輪休'):
-            lx.append(person)
+            if 1 <= ban <= 20 or 50 <= ban <= 53 or 60 <= ban <= 63:
+                lx.append(person)
         elif st in ('公', '公假') or '公假' in st:
             gg.append(person)
         elif st in ('優', '休', '補', '休假', '補休') or '假' in st:
@@ -660,7 +738,7 @@ def generate_word(data):
     # Both 35-column and 37-column approved layouts are supported.
     CODE_COL, NAME_COL, NOTE_COL, OCODE_COL, ONAME_COL = (len(t.columns)-5, len(t.columns)-4, len(t.columns)-3, len(t.columns)-2, len(t.columns)-1)
     # Resolve each complex merged row only once instead of dozens of times.
-    row_cells = [row.cells for row in t.rows]
+    row_cells = table_row_cells(t)
 
     ban_to_row = {}
     for r_idx in range(4, len(t.rows)):
@@ -674,65 +752,32 @@ def generate_word(data):
     if 60 not in ban_to_row and 61 in ban_to_row:
         secretary_row = ban_to_row[61] - 1
         if secretary_row >= 4 and not row_cells[secretary_row][CODE_COL].text.strip():
-            set_cell(row_cells[secretary_row][CODE_COL], '60')
+            set_cell_preserving_format(row_cells[secretary_row][CODE_COL], '60')
             ban_to_row[60] = secretary_row
 
-    roster = sb_get('staff', params={'select': 'code,name', 'order': 'code'})
-    if not isinstance(roster, list) or not roster:
-        raise RuntimeError('人員名冊讀取失敗')
-    names_by_code = {}
-    for entry in roster:
-        try:
-            code = int(entry.get('code'))
-        except (TypeError, ValueError):
-            continue
-        if 1 <= code <= 63:
-            names_by_code[code] = str(entry.get('name') or '').strip()
-    # External personnel use the Excel daily number, which rotates.
-    daily_external = {}
-    for person in list(on_duty) + list(off_duty):
-        code = person.get('ban')
-        if isinstance(code, int) and 1 <= code <= 20 and person.get('name'):
-            daily_external[code] = str(person['name']).strip()
+    daily_people = {p['ban']: p for p in list(on_duty) + list(off_duty)
+                    if isinstance(p.get('ban'), int)}
     for code, row_index in ban_to_row.items():
-        name_cell = row_cells[row_index][NAME_COL]
-        name = daily_external.get(code, '') if code <= 20 else names_by_code.get(code, '')
-        if name_cell.text.strip() != name:
-            set_cell(name_cell, name)
+        row = row_cells[row_index]
+        person = daily_people.get(code, {})
+        name = str(person.get('name') or '')
+        set_cell_preserving_format(row[NAME_COL], name)
+        status = str(person.get('status') or '').strip()
+        persistent = PERSISTENT_STAFF_REMARKS.get((code, name), '')
+        daily_note = str(person.get('remarks') or
+                         person.get('supervisorSource', {}).get('remarks') or status).strip()
+        note = ' '.join(dict.fromkeys(value for value in (persistent, daily_note) if value))
+        # Empty daily status is a write too: remove yesterday's remarks.
+        set_cell_preserving_format(row[NOTE_COL], note)
+        for column in (CODE_COL, NAME_COL):
+            apply_directory_text_format(row[column], 12)
+        # Read from accepted 11/6 Word: ordinary remarks inherit Normal
+        # 12pt; 留職停薪 explicitly uses 9pt, supervisor remarks 8pt.
+        # Keep the user's black-text correction; do not reuse template blue.
+        remark_points = {23: 9, 35: 8, 43: 8, 60: 8, 61: 8, 62: 8, 63: 8}.get(code, 12)
+        apply_directory_text_format(row[NOTE_COL], remark_points)
 
-    # Keep existing names and formatting. Only replace a name when the Excel
-    # record explicitly supplies a valid numbered staff member.
-    for person in list(on_duty) + list(off_duty):
-        ban = person.get('ban')
-        name = person.get('name')
-        if not isinstance(ban, int) or ban not in ban_to_row or not name:
-            continue
-        row = row_cells[ban_to_row[ban]]
-        # Excel is authoritative for numbered staff names; Word is layout only.
-        if ban >= 21 and names_by_code.get(ban) != name:
-            continue
-        status = person.get('status') or ''
-        # Do not overwrite permanent remarks such as 內部管理 on ordinary days.
-        if isinstance(ban, int) and ban >= 21:
-            leave_status = {'輪': '輪休', '休': '休假', '優': '休假',
-                            '補': '休假', '公': '公假'}.get(status, status)
-            # Preserve Excel's full leave text, including partial-day and mixed leave.
-            # E.g. 8-12公假 13-17休假 must not be reduced to a single category.
-            # For mixed leave types, display public leave first as the priority.
-            if '公假' in leave_status:
-                display_leave = '公假'
-            elif '輪休' in leave_status:
-                display_leave = '輪休'
-            elif '休假' in leave_status:
-                display_leave = '休假'
-            elif '假' in leave_status and '停休' not in leave_status:
-                display_leave = leave_status
-            else:
-                display_leave = ''
-            if display_leave and row[NOTE_COL].text.strip() != display_leave:
-                set_cell(row[NOTE_COL], display_leave)
-        elif status and row[NOTE_COL].text.strip() != status:
-            set_cell(row[NOTE_COL], status)
+    clear_daily_hand_entry_codes(row_cells, CODE_COL)
 
     lx_rows = find_section_rows(t, ONAME_COL, '輪   休', row_cells)
     bx_rows = find_section_rows(t, ONAME_COL, '休(補)假', row_cells)
@@ -752,44 +797,29 @@ def generate_word(data):
         for j, person in enumerate(people):
             set_cell_preserving_format(row_cells[rows[j]][OCODE_COL], str(person['ban']) if isinstance(person.get('ban'), int) else '')
             set_cell_preserving_format(row_cells[rows[j]][ONAME_COL], person['name'])
+            apply_directory_text_format(row_cells[rows[j]][OCODE_COL], 12)
+            apply_directory_text_format(row_cells[rows[j]][ONAME_COL], 12)
 
-    day = roc_date.split('年')[1].split('日')[0] + '日'
-    for cell in row_cells[0]:
-        if '民國' in cell.text and '年' in cell.text:
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    if '年月日【' in run.text:
-                        run.text = f'年{day}【'
-                    elif run.text == '星期':
-                        run.text = f'星期{weekday}'
-            break
+    date_match = re.fullmatch(r'(\d+)年(\d+)月(\d+)日', roc_date)
+    if not date_match:
+        raise ValueError('勤務日期格式異常')
+    year, month, day = map(int, date_match.groups())
+    date_obj = datetime(year + 1911, month, day)
+    expected_weekday = '一二三四五六日'[date_obj.weekday()]
+    if weekday != expected_weekday:
+        raise ValueError('勤務日期與星期不一致')
+    date_cells = {cell._tc: cell for cell in row_cells[0]
+                  if '民國' in cell.text and '年' in cell.text}
+    if len(date_cells) != 1:
+        raise ValueError('Word範本無法定位唯一日期欄')
+    date_cell = next(iter(date_cells.values()))
+    set_cell_preserving_format(
+        date_cell, f'中華民國{year}年{month}月{day}日【星期{weekday}】')
 
-    if sake_times and has_sake:
-        time_to_row = {}
-        for r_idx in range(len(t.rows)):
-            cells = row_cells[r_idx]
-            if not cells: continue
-            cell_txt = cells[0].text.strip()
-            m = re.match(r'(\d{1,2})[－\-–](\d{1,2})', cell_txt)
-            if m:
-                h = int(m.group(1))
-                time_to_row[h] = r_idx
-
-        for st in sake_times:
-            s_h = int(st['start'])
-            e_h = int(st['end'])
-            hours = []
-            h = s_h
-            while True:
-                hours.append(h % 24)
-                h += 1
-                if h % 24 == e_h % 24: break
-                if len(hours) > 16: break
-            for h in hours:
-                if h in time_to_row:
-                    # Do not draw borders across the personnel directory.
-                    for cell in row_cells[time_to_row[h]][:CODE_COL]:
-                        set_red_border_cells([cell])
+    # Approved templates own the duty-area borders, including the sake frame.
+    # Painting four sides of every time-row cell destroys that frame and adds
+    # borders to shared vertical cells containing the fixed blue annotation.
+    # Keep every physical cell's original borders, widths and merges intact.
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -810,16 +840,27 @@ def get_staff():
 
 @app.route('/api/staff', methods=['POST'])
 def add_staff():
+    if not staff_admin_authorized():
+        return jsonify({'error': '修改人員資料需要有效的管理授權'}), 403
     return jsonify(sb_post('staff', request.json))
 
 @app.route('/api/staff/<int:code>', methods=['PUT'])
 def update_staff(code):
+    if not staff_admin_authorized():
+        return jsonify({'error': '修改人員資料需要有效的管理授權'}), 403
     return jsonify(sb_patch('staff', 'code', code, request.json))
 
 @app.route('/api/staff/<int:code>', methods=['DELETE'])
 def delete_staff(code):
+    if not staff_admin_authorized():
+        return jsonify({'error': '修改人員資料需要有效的管理授權'}), 403
     sb_delete('staff', 'code', code)
     return jsonify({'ok': True})
+
+def staff_admin_authorized():
+    token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
+    supplied = request.headers.get('X-Template-Upload-Token', '')
+    return bool(token) and hmac.compare_digest(supplied.encode('utf-8'), token.encode('utf-8'))
 
 def validate_monthly_data_before_write(monthly_data):
     """Fail closed before any roster or daily schedule is written to Supabase."""
@@ -842,9 +883,9 @@ def validate_monthly_data_before_write(monthly_data):
                 raise ValueError(f'{date_str} 外勤輪動及固定代號不完整')
         internal_people = [p for p in people
                            if p.get('sourceSheet') == '全隊大表']
-        if internal_people and len(internal_people) != 21:
+        if internal_people and len(internal_people) != 25:
             raise ValueError(
-                f'{date_str} 全隊大表 BA:BV 應有 21 人，實際 {len(internal_people)} 人')
+                f'{date_str} 全隊大表 AW:BV 應有 25 人，實際 {len(internal_people)} 人')
         seen_codes = set()
         seen_names = set()
         for person in people:
@@ -870,7 +911,7 @@ def validate_monthly_data_before_write(monthly_data):
             }
             if code in verified_supervisors and name != verified_supervisors[code]:
                 raise ValueError(f'{date_str} 主管代號 {code} 與姓名 {name} 不符')
-        match = re.fullmatch(r'(\\d+)年(\\d+)月(\\d+)日', date_str)
+        match = re.fullmatch(r'(\d+)年(\d+)月(\d+)日', date_str)
         if not match:
             raise ValueError(f'{date_str} 日期格式異常')
         roc_year, month, day_number = map(int, match.groups())
@@ -885,8 +926,11 @@ def validate_monthly_data_before_write(monthly_data):
 
 @app.route('/api/parse-excel', methods=['POST'])
 def parse_excel_api():
+    if not staff_admin_authorized():
+        return jsonify({'error': '上傳原始全隊大表需要管理授權'}), 403
     f = request.files.get('file')
     if not f: return jsonify({'error': '未上傳檔案'}), 400
+    source_saved = False
     try:
         excel_bytes = f.read(12 * 1024 * 1024 + 1)
         if len(excel_bytes) > 12 * 1024 * 1024:
@@ -900,12 +944,9 @@ def parse_excel_api():
         # saved in the private bucket first.
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise RuntimeError('無法永久儲存原始 Excel，停止匯入')
-        token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
-        if not token or not hmac.compare_digest(request.headers.get('X-Template-Upload-Token', ''), token):
-            raise PermissionError('上傳原始全隊大表需要管理授權')
         dates = list(result['monthlyData'])
         months = {tuple(map(int, m.groups()[:2])) for date in dates
-                  if (m := re.fullmatch(r'(\\d+)年(\\d+)月(\\d+)日', date))}
+                  if (m := re.fullmatch(r'(\d+)年(\d+)月(\d+)日', date))}
         if len(months) != 1 or len(dates) != len(result['monthlyData']):
             raise ValueError('Excel 日期跨月或格式異常，停止匯入')
         roc_year, month = next(iter(months))
@@ -919,6 +960,7 @@ def parse_excel_api():
         uploaded = req.post(url, headers=headers, data=excel_bytes, timeout=40)
         if uploaded.status_code not in (200, 201):
             raise RuntimeError(f'原始 Excel 儲存失敗 HTTP {uploaded.status_code}，停止匯入')
+        source_saved = True
         source_check = req.get(
             f'{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{object_name}',
             headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
@@ -937,6 +979,8 @@ def parse_excel_api():
         # 自動存到 Supabase
         saved = save_to_supabase(result['monthlyData'])
         result['savedDays'] = saved
+        result['year'] = roc_year
+        result['month'] = month
         # Report the actual parsed supervisor leave rows for audit.
         result['supervisorAudit'] = {
             date: [p for p in day.get('off_duty', [])
@@ -949,8 +993,14 @@ def parse_excel_api():
         new_staff = sync_staff(result['staffFromExcel'])
         result['newStaff'] = new_staff
         return jsonify(result)
+    except PermissionError as e:
+        return jsonify({'error': str(e)}), 403
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        if source_saved:
+            return jsonify({'error': '原始 Excel 已保存，但匯入未完成；請勿使用舊月資料，請重新匯入相同 Excel。',
+                            'detail': str(e), 'sourceSaved': True,
+                            'persistenceState': 'incomplete', 'needsReimport': True}), 500
+        return jsonify({'error': str(e)}), 400 if isinstance(e, ValueError) else 500
 
 @app.route('/api/duty/<date_str>', methods=['GET'])
 def get_duty(date_str):
@@ -997,11 +1047,7 @@ def get_duty_month(year, month):
     return jsonify(data)
 
 def verified_generation_input(payload):
-    """Reparse the authoritative Excel on every generation request.
-
-    This checks source consistency only. Visual DOCX rendering verification is
-    still missing, so official output remains blocked until that is implemented.
-    """
+    """Verify a day against the source Excel snapshot for this request."""
     if not isinstance(payload, dict):
         raise ValueError('生成資料格式不正確')
     date_str = payload.get('rocDate')
@@ -1009,21 +1055,15 @@ def verified_generation_input(payload):
     if not match:
         raise ValueError('缺少有效的勤務日期')
     roc_year, month, _ = map(int, match.groups())
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError('無法讀取原始 Excel')
     object_name = f'source_excel/{roc_year + 1911}-{month:02d}.xlsx'
-    source = req.get(
-        f'{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{object_name}',
-        headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
-        timeout=40
-    )
-    if source.status_code != 200:
-        raise RuntimeError(f'{date_str} 原始 Excel 不存在或讀取失敗，HTTP {source.status_code}')
-    if len(source.content) > 12 * 1024 * 1024:
-        raise ValueError('原始 Excel 超過 12MB')
-    parsed = parse_excel(source.content)
-    validate_monthly_data_before_write(parsed['monthlyData'])
-    day = parsed['monthlyData'].get(date_str)
+    snapshot = g.get('batch_source_month') if has_request_context() else None
+    if snapshot is not None and snapshot[0] == object_name:
+        monthly_data = snapshot[1]
+    else:
+        monthly_data = read_generation_month(object_name, date_str)
+        if snapshot is not None:
+            g.batch_source_month = (object_name, monthly_data)
+    day = monthly_data.get(date_str)
     if day is None:
         raise ValueError(f'{date_str} 不在原始 Excel 內')
     expected = {
@@ -1032,19 +1072,56 @@ def verified_generation_input(payload):
         'sakeTimes': day['sake_times'], 'onDuty': day['on_duty'],
         'offDuty': day['off_duty'],
     }
+    for timing in expected['sakeTimes']:
+        if (not isinstance(timing, dict) or type(timing.get('start')) is not int
+                or type(timing.get('end')) is not int
+                or not 0 <= timing['start'] <= 23 or not 0 <= timing['end'] <= 24
+                or timing['start'] % 24 == timing['end'] % 24):
+            raise ValueError(f'{date_str} 原始 Excel 取酒時段異常')
     # Reject tampering or stale frontend data. The source Excel is authoritative.
     for key, value in expected.items():
         if payload.get(key) != value:
             raise ValueError(f'{date_str} {key} 與當次原始 Excel 解析不一致')
-    raise RuntimeError('當次 Excel 重新解析已完成，但 Word 逐頁渲染與完整人員驗證尚未完成，禁止正式輸出')
+    return expected
+
+
+def read_generation_month(object_name, date_str):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError('無法讀取原始 Excel')
+    source = req.get(
+        f'{SUPABASE_URL}/storage/v1/object/authenticated/{TEMPLATE_BUCKET}/{object_name}',
+        headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
+                 'Cache-Control': 'no-cache'},
+        params={'v': uuid.uuid4().hex}, timeout=40
+    )
+    if source.status_code != 200:
+        raise RuntimeError(f'{date_str} 原始 Excel 不存在或讀取失敗，HTTP {source.status_code}')
+    if len(source.content) > 12 * 1024 * 1024:
+        raise ValueError('原始 Excel 超過 12MB')
+    monthly_data = parse_excel(source.content)['monthlyData']
+    validate_monthly_data_before_write(monthly_data)
+    return monthly_data
+
+
+def generate_checked_word(data):
+    g.generation_template = None
+    buf = generate_word(data)
+    snapshot = g.generation_template
+    if snapshot is None or snapshot[0] != get_tmpl(
+            data['isHoliday'], data['hasSake'], data['sakeTimes'], data['rocDate']):
+        raise ValueError('Word 驗證失敗：缺少當次模板來源')
+    validate_generated_word(buf.getvalue(), data, snapshot[1],
+                            PERSISTENT_STAFF_REMARKS, find_section_rows)
+    buf.seek(0)
+    return buf
 
 
 @app.route('/api/generate', methods=['POST'])
 def generate_api():
     data = request.json
     try:
-        verified_generation_input(data)
-        buf = generate_word(data)
+        data = verified_generation_input(data)
+        buf = generate_checked_word(data)
         fname = f'勤務表_{data.get("rocDate","")}.docx'
         return send_file(buf, as_attachment=True, download_name=fname,
                         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
@@ -1054,14 +1131,22 @@ def generate_api():
 @app.route('/api/generate-batch', methods=['POST'])
 def generate_batch():
     days_data = request.json
+    if not isinstance(days_data, list) or not days_data or any(not isinstance(d, dict) for d in days_data):
+        return jsonify({'error': '請提供有效的勤務日期清單'}), 400
+    # Use one source-month snapshot and one copy of each template per batch.
+    g.batch_source_month = (None, None)
+    g.batch_template_bytes = {}
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
             try:
-                verified_generation_input(d)
-                buf = generate_word(d)
+                d = verified_generation_input(d)
+                buf = generate_checked_word(d)
                 fname = f"勤務表_{d.get('rocDate','')}.docx"
                 zf.writestr(fname, buf.read())
+                # In long batches, release cyclic Word objects before the next document.
+                if len(days_data) > 5:
+                    gc.collect()
             except Exception as e:
                 # Never return a partial ZIP that silently omits failed dates.
                 return jsonify({'error': '批次產生失敗', 'date': d.get('rocDate', ''), 'detail': str(e)}), 500
@@ -1071,16 +1156,14 @@ def generate_batch():
 
 @app.route('/api/upload-template', methods=['POST'])
 def upload_template():
+    if not staff_admin_authorized():
+        return jsonify({'error': '範本上傳未授權，請輸入管理密碼'}), 403
     tmpl_type = request.form.get('type')
     f = request.files.get('file')
     if not f or tmpl_type not in TEMPLATE_NAMES:
         return jsonify({'error': '請選擇正確的範本類型與Word檔案'}), 400
     if not SUPABASE_URL or not SUPABASE_KEY:
         return jsonify({'error': '尚未設定永久儲存服務，未執行上傳'}), 503
-    expected_token = os.environ.get('TEMPLATE_UPLOAD_TOKEN', '')
-    supplied_token = request.headers.get('X-Template-Upload-Token', '')
-    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
-        return jsonify({'error': '範本上傳未授權，請輸入管理密碼'}), 403
     try:
         payload = f.read(5 * 1024 * 1024 + 1)
         validate_template_bytes(payload)
