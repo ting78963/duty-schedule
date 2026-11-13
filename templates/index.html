@@ -221,8 +221,9 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#f8f9fc; }
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="card"><div class="card-title">📄 平日模板</div><div id="tmpl-平日" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日')">上傳</button><input type="file" id="file-平日" accept=".docx" style="display:none" onchange="doUploadTmpl('平日',this)"></div>
         <div class="card"><div class="card-title">📄 假日模板</div><div id="tmpl-假日" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('假日')">上傳</button><input type="file" id="file-假日" accept=".docx" style="display:none" onchange="doUploadTmpl('假日',this)"></div>
-        <div class="card"><div class="card-title">🚔 平日取締酒駕模板</div><div id="tmpl-平日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日取酒')">上傳</button><input type="file" id="file-平日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('平日取酒',this)"></div>
-        <div class="card"><div class="card-title">🚔 假日取締酒駕模板</div><div id="tmpl-假日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('假日取酒')">上傳</button><input type="file" id="file-假日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('假日取酒',this)"></div>
+        <div class="card"><div class="card-title">🚔 平日取締酒駕 19–23 模板</div><div id="tmpl-平日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日取酒')">上傳</button><input type="file" id="file-平日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('平日取酒',this)"></div>
+        <div class="card"><div class="card-title">🚔 平日取締酒駕 18–22 模板</div><div id="tmpl-平日取酒18–22" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('平日取酒18–22')">上傳</button><input type="file" id="file-平日取酒18–22" accept=".docx" style="display:none" onchange="doUploadTmpl('平日取酒18–22',this)"></div>
+        <div class="card"><div class="card-title">🚔 假日取締酒駕 18–22 模板</div><div id="tmpl-假日取酒" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">未上傳</div><button class="btn btn-outline btn-sm" onclick="uploadTmpl('假日取酒')">上傳</button><input type="file" id="file-假日取酒" accept=".docx" style="display:none" onchange="doUploadTmpl('假日取酒',this)"></div>
       </div>
     </div>
 
@@ -232,7 +233,8 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#f8f9fc; }
 <script>
 // ─── 狀態 ──────────────────────────────────────────────────
 let monthlyData = {};   // date -> {isHoliday, hasSake, onDuty, offDuty, sakeTimes}
-let sakeByDate  = {};   // date -> '18-22'（從大表解析）
+let sakeByDate  = {};   // date -> [{start, end}]（從大表解析）
+let monthLoadId = 0;
 let manualSake  = {};   // date -> [{start,end}]（臨時新增）
 let multiMode   = false;
 let multiSel    = new Set();
@@ -252,81 +254,101 @@ function showPage(id, el) {
 }
 
 // ─── 上傳大表 ───────────────────────────────────────────────
+function normalizeSakeTimes(value) {
+  if (value == null || value === '') return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values.map(item => {
+    const parts = typeof item === 'string' ? item.split('-') : [item.start, item.end];
+    const start = Number(parts[0]), end = Number(parts[1]);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > 23 || end < 0 || end > 24 || start % 24 === end % 24) {
+      throw new Error('取締酒駕時段格式不正確');
+    }
+    return {start, end};
+  });
+}
+
 async function uploadExcel(input) {
-  const file = input.files[0]; if(!file) return;
+  const file = input.files[0]; if (!file) return;
   const zone = document.getElementById('excel-zone');
-  zone.innerHTML = '<div class="spinner"></div> 解析中...';
-  const fd = new FormData(); fd.append('file', file);
+  zone.classList.remove('done');
+  monthlyData = {}; sakeByDate = {}; manualSake = {}; multiSel.clear();
+  ++monthLoadId;
+  document.getElementById('day-card').style.display = 'none';
+  renderCal();
+  let stored = false;
   try {
-    const res = await fetch('/api/parse-excel', {method:'POST', body:fd});
-    const data = await res.json();
-    sakeByDate = data.sakeByDate || {};
-    zone.classList.add('done');
-    zone.innerHTML = `<div style="font-size:24px">✅</div><div style="font-size:14px;font-weight:700;margin-top:8px">${file.name}</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">取締酒駕時段 ${Object.keys(sakeByDate).length} 筆</div>`;
-    // 更新總覽
-    const tbody = document.getElementById('sake-table-body');
-    tbody.innerHTML = '';
-    Object.entries(sakeByDate).forEach(([date, time]) => {
-      const range = typeof time === 'string' ? time : (time && typeof time === 'object' ? `${time.start}-${time.end}` : '');
-      const [s,e] = range.split('-');
-      const display = s !== undefined && e !== undefined ? `${s}:00 – ${e}:00` : '未提供時段';
-      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${display}</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
+    if (!templateUploadToken) templateUploadToken = prompt('請輸入大表／範本管理密碼：') || '';
+    if (!templateUploadToken) {
+      zone.textContent = '未提供管理密碼，已取消上傳';
+      return;
+    }
+    zone.innerHTML = '<div class="spinner"></div> 上傳及核對中...';
+    const fd = new FormData(); fd.append('file', file);
+    const res = await fetch('/api/parse-excel', {
+      method:'POST', body:fd,
+      headers:{'X-Template-Upload-Token':templateUploadToken}
     });
-    document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
-    document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      if (res.status === 403) templateUploadToken = '';
+      throw new Error(data.error || `伺服器錯誤 HTTP ${res.status}`);
+    }
+    if (!data.year || !data.month || !data.savedDays) throw new Error('伺服器未確認大表保存成功');
+    stored = true;
+    await loadSavedMonth(data.year, data.month);
+  } catch (error) {
+    monthlyData = {}; sakeByDate = {};
+    zone.classList.remove('done');
+    zone.textContent = (stored ? '大表已保存，但重新讀取失敗：' : '上傳失敗：') + error.message;
     renderCal();
-  } catch(e) {
-    console.error('Excel upload/display failed:', e);
-    zone.innerHTML = '<div style="color:var(--red)">處理資料時發生錯誤，請回報管理員</div>';
+  } finally {
+    input.value = '';
   }
 }
 
 // ─── 自動載入已儲存的大表 ─────────────────────────────────────
-async function loadSavedMonth() {
-  const zone = document.getElementById('excel-zone');
-  try {
-    const response = await fetch('/api/duty-month/latest', {cache:'no-store'});
-    if (!response.ok) throw new Error('HTTP '+response.status);
-    const saved = await response.json();
-    if (!saved.year || !saved.month || !Array.isArray(saved.days) || !saved.days.length) return;
-    currentYear = saved.year;
-    currentMonth = saved.month;
-    monthlyData = {};
-    sakeByDate = {};
-    const people = new Set();
-    saved.days.forEach(row => {
-      const date = row.date_str;
-      const times = Array.isArray(row.sake_times) ? row.sake_times : [];
-      monthlyData[date] = {
-        rocDate: row.roc_date, weekday: row.weekday,
-        isHoliday: row.is_holiday, hasSake: row.has_sake,
-        sakeTimes: times, onDuty: row.on_duty || [], offDuty: row.off_duty || []
-      };
-      for (const person of [...(row.on_duty || []), ...(row.off_duty || [])]) {
-        if (person && person.name) people.add(person.name);
-      }
-      if (row.has_sake && times.length) {
-        const first = times[0];
-        sakeByDate[date] = typeof first === 'string' ? first : `${first.start}-${first.end}`;
-      }
-    });
-    zone.classList.add('done');
-    zone.innerHTML = `<div style="font-size:24px">✅</div><div style="font-size:14px;font-weight:700;margin-top:8px">已載入 ${currentYear}年${currentMonth}月大表</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">Supabase 已儲存 ${saved.days.length} 天，無須重新上傳</div>`;
-    document.getElementById('stat-staff').textContent = people.size || '－';
-    const tbody = document.getElementById('sake-table-body');
-    tbody.innerHTML = '';
-    Object.entries(sakeByDate).forEach(([date, time]) => {
-      const [start,end] = time.split('-');
-      const display = start && end ? `${start}:00 – ${end}:00` : '未提供時段';
-      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${display}</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
-    });
-    document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
-    document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
-    renderCal();
-  } catch (error) {
-    console.error('Failed to load saved month:', error);
-    zone.innerHTML = '<div style="color:var(--red)">讀取已儲存月份失敗，請稍後重新整理；無須重複上傳</div>';
+async function loadSavedMonth(year = null, month = null) {
+  const loadId = ++monthLoadId;
+  const url = year && month ? `/api/duty-month/${year}/${month}` : '/api/duty-month/latest';
+  const response = await fetch(url, {cache:'no-store'});
+  if (!response.ok) throw new Error('讀取月份失敗 HTTP '+response.status);
+  const body = await response.json();
+  const saved = year && month ? {year, month, days:body} : body;
+  if (loadId !== monthLoadId) return;
+  if (!saved.year || !saved.month || !Array.isArray(saved.days) || !saved.days.length) {
+    if (year && month) throw new Error('未取得已保存的每日勤務資料');
+    return;
   }
+  const nextData = {}, nextSake = {}, people = new Set();
+  saved.days.forEach(row => {
+    const times = normalizeSakeTimes(row.sake_times);
+    nextData[row.date_str] = {
+      rocDate:row.roc_date, weekday:row.weekday,
+      isHoliday:row.is_holiday, hasSake:row.has_sake,
+      sakeTimes:times, onDuty:row.on_duty || [], offDuty:row.off_duty || []
+    };
+    for (const person of [...(row.on_duty || []), ...(row.off_duty || [])]) {
+      if (person && person.name) people.add(person.name);
+    }
+    if (row.has_sake && times.length) nextSake[row.date_str] = times;
+  });
+  currentYear = saved.year; currentMonth = saved.month;
+  monthlyData = nextData; sakeByDate = nextSake; manualSake = {};
+  multiSel.clear();
+  const zone = document.getElementById('excel-zone');
+  zone.classList.add('done');
+  zone.textContent = `已載入 ${currentYear}年${currentMonth}月大表，共 ${saved.days.length} 天`;
+  document.getElementById('stat-staff').textContent = people.size || '－';
+  const tbody = document.getElementById('sake-table-body'); tbody.innerHTML = '';
+  Object.entries(sakeByDate).forEach(([date, times]) => {
+    for (const time of times) {
+      tbody.innerHTML += `<tr><td>${date}</td><td><strong style="color:var(--red)">${time.start}:00 – ${time.end}:00</strong></td><td><span class="tag tag-sake">大表自動</span></td></tr>`;
+    }
+  });
+  document.getElementById('sake-summary').style.display = Object.keys(sakeByDate).length ? 'block' : 'none';
+  document.getElementById('stat-sake').textContent = Object.keys(sakeByDate).length;
+  document.getElementById('day-card').style.display = 'none';
+  renderCal();
 }
 
 // ─── 月曆 ───────────────────────────────────────────────────
@@ -399,8 +421,7 @@ function showDayCard(d, dow, isHoliday) {
 
   // 取締酒駕區塊
   let sakeItems = '';
-  if(autoSake) {
-    const [s,e] = autoSake.split('-');
+  for (const {start:s, end:e} of normalizeSakeTimes(autoSake)) {
     sakeItems += `<div class="sake-item">
       <span style="font-size:20px">🚔</span>
       <div><div class="sake-time-big">${s}:00 – ${e}:00</div><div style="font-size:11px;color:var(--text-muted)">取締酒駕</div></div>
@@ -451,7 +472,7 @@ function showDayCard(d, dow, isHoliday) {
     </div>
 
     <div style="display:flex;gap:10px;margin-top:8px">
-      <button class="btn btn-gold" onclick="generateOne('${dateStr}',${isHoliday},${hasSake})">
+      <button class="btn btn-gold" onclick="generateOne('${dateStr}',${isHoliday},${hasSake},this)">
         ⬇️ 產生並下載 Word
       </button>
     </div>
@@ -491,8 +512,7 @@ function buildDayData(dateStr, isHoliday) {
   const autoSake = sakeByDate[dateStr];
   const manSakes = manualSake[dateStr] || [];
   const allSakes = [];
-  if(autoSake) { const [s,e]=autoSake.split('-'); allSakes.push({start:parseInt(s),end:parseInt(e)}); }
-  manSakes.forEach(st=>allSakes.push(st));
+  allSakes.push(...normalizeSakeTimes(autoSake), ...normalizeSakeTimes(manSakes));
   const hasSake = allSakes.length > 0;
   const parts = dateStr.match(/(\d+)年(\d+)月(\d+)日/);
   const d = parseInt(parts[3]);
@@ -500,12 +520,13 @@ function buildDayData(dateStr, isHoliday) {
   const weekday = DOW[date.getDay()];
 
   // 從 monthlyData 取當天資料（如果有）
-  const dayData = monthlyData[dateStr] || {};
+  const dayData = monthlyData[dateStr];
+  if (!dayData) throw new Error('請先上傳或重新載入該日 Excel 資料');
 
   return {
     rocDate: dateStr,
     weekday,
-    isHoliday: isHoliday||date.getDay()===0||date.getDay()===6,
+    isHoliday: dayData.isHoliday,
     hasSake,
     sakeTimes: allSakes,
     onDuty:  dayData.onDuty  || [],
@@ -513,40 +534,49 @@ function buildDayData(dateStr, isHoliday) {
   };
 }
 
-async function generateOne(dateStr, isHoliday, hasSake) {
-  const data = buildDayData(dateStr, isHoliday);
-  const btn = event.target;
-  btn.innerHTML = '<span class="spinner"></span> 產生中...';
-  btn.disabled = true;
+async function downloadGeneratedFile(response, contentType, filename) {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.error || `伺服器錯誤 HTTP ${response.status}`);
+  }
+  const actualType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (actualType !== contentType) throw new Error('伺服器未回傳正確的檔案格式');
+  const blob = await response.blob();
+  const signature = new Uint8Array(await blob.slice(0,4).arrayBuffer());
+  if (signature.length !== 4 || signature[0] !== 80 || signature[1] !== 75 || signature[2] !== 3 || signature[3] !== 4) {
+    throw new Error('下載內容不是有效的 Word／ZIP 檔案');
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function generateOne(dateStr, isHoliday, hasSake, btn) {
+  if (btn) { btn.innerHTML = '<span class="spinner"></span> 產生中...'; btn.disabled = true; }
   try {
+    const data = buildDayData(dateStr, isHoliday);
     const res = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error(error.error || `伺服器錯誤 HTTP ${res.status}`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=`勤務表_${dateStr}.docx`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  } catch(e) { alert('產生失敗：'+e.message); }
-  btn.innerHTML = '⬇️ 產生並下載 Word'; btn.disabled = false;
+    await downloadGeneratedFile(res, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', `勤務表_${dateStr}.docx`);
+  } catch (error) {
+    alert('產生失敗：'+error.message);
+  } finally {
+    if (btn) { btn.innerHTML = '⬇️ 產生並下載 Word'; btn.disabled = false; }
+  }
 }
 
 async function generateBatch() {
-  if(!multiSel.size) { alert('請先選擇日期'); return; }
-  const daysData = [];
-  multiSel.forEach(d => {
-    const dateStr = `${currentYear}年${currentMonth}月${d}日`;
-    const date = new Date(currentYear+1911, currentMonth-1, d);
-    const isHoliday = date.getDay()===0||date.getDay()===6;
-    daysData.push(buildDayData(dateStr, isHoliday));
-  });
-  daysData.sort((a,b)=>a.rocDate.localeCompare(b.rocDate));
-  const res = await fetch('/api/generate-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(daysData)});
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href=url; a.download='勤務表批次.zip';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  if (!multiSel.size) { alert('請先選擇日期'); return; }
+  try {
+    const daysData = [...multiSel].sort((a,b) => a-b).map(d => {
+      const dateStr = `${currentYear}年${currentMonth}月${d}日`;
+      return buildDayData(dateStr);
+    });
+    const res = await fetch('/api/generate-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(daysData)});
+    await downloadGeneratedFile(res, 'application/zip', '勤務表批次.zip');
+  } catch (error) {
+    alert('批次產生失敗：'+error.message);
+  }
 }
 
 // ─── 人員管理 ───────────────────────────────────────────────
@@ -575,21 +605,43 @@ async function addStaff() {
   const name = document.getElementById('new-name').value.trim();
   const type = document.getElementById('new-type').value;
   if(!code||!name) { alert('請填寫代號和姓名'); return; }
-  await fetch('/api/staff', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code,name,type})});
-  document.getElementById('add-staff-form').style.display='none';
-  loadStaff();
+  try {
+    await staffWriteRequest('/api/staff', 'POST', {code,name,type});
+    document.getElementById('add-staff-form').style.display='none';
+    await loadStaff();
+  } catch(error) { alert('新增人員失敗：'+error.message); }
+}
+
+async function staffWriteRequest(url, method, data) {
+  if(!templateUploadToken) templateUploadToken = prompt('請輸入管理密碼：') || '';
+  if(!templateUploadToken) throw new Error('未提供管理授權，未修改資料');
+  const options = {method, headers:{'X-Template-Upload-Token':templateUploadToken}};
+  if(data !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(data);
+  }
+  const res = await fetch(url, options);
+  const result = await res.json().catch(()=>({}));
+  if(res.status === 403) templateUploadToken = '';
+  if(!res.ok || result.error) throw new Error(result.error || `伺服器錯誤 (${res.status})`);
+  return result;
 }
 
 async function deleteStaff(code) {
   if(!confirm('確定刪除？')) return;
-  await fetch(`/api/staff/${code}`, {method:'DELETE'});
-  loadStaff();
+  try {
+    await staffWriteRequest(`/api/staff/${code}`, 'DELETE');
+    await loadStaff();
+  } catch(error) { alert('刪除人員失敗：'+error.message); }
 }
 
-function editStaff(code, name, type) {
+async function editStaff(code, name, type) {
   const newName = prompt('修改姓名：', name);
   if(!newName) return;
-  fetch(`/api/staff/${code}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:newName, type})}).then(()=>loadStaff());
+  try {
+    await staffWriteRequest(`/api/staff/${code}`, 'PUT', {name:newName,type});
+    await loadStaff();
+  } catch(error) { alert('修改人員失敗：'+error.message); }
 }
 
 // ─── 模板上傳 ───────────────────────────────────────────────
@@ -623,7 +675,11 @@ async function doUploadTmpl(type, input) {
 
 // 初始化
 renderCal();
-loadSavedMonth();
+loadSavedMonth().catch(error => {
+  const zone = document.getElementById('excel-zone');
+  zone.classList.remove('done');
+  zone.textContent = '讀取已儲存月份失敗：'+error.message;
+});
 </script>
 </body>
 </html>

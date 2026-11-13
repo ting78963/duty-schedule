@@ -10,7 +10,7 @@
    - Python: 3.11
 4. 環境變數：
    - `SUPABASE_URL`: 你的 Supabase URL
-   - `SUPABASE_KEY`: 你的 Supabase anon key
+   - `SUPABASE_KEY`: Flask 伺服器端使用的 Supabase service_role 金鑰
 
 ## Supabase 建表
 
@@ -24,8 +24,14 @@ create table staff (
 
 ## 上傳模板
 
-部署後進入「模板管理」頁面，上傳四個 .docx 模板：
-- 平日
-- 假日
-- 平日取締酒駕
-- 假日取締酒駕
+「模板管理」以管理密碼上傳已驗收的 .docx 到私有 `duty-templates` 儲存區。
+
+| 模板 | Storage 物件名稱 |
+| --- | --- |
+| 平日無取酒 | `weekday.docx` |
+| 假日無取酒 | `holiday.docx` |
+| 平日取酒 19–23 | `weekday_sake.docx` |
+| 平日取酒 18–22 | `weekday_sake_18_22.docx` |
+| 假日取酒 18–22 | `holiday_sake.docx` |
+
+新增平日 18–22 時，只上傳已驗收的完整修正版到新物件名稱。Flask 優先讀取私有 Storage，物件不存在時才使用對應的本機 `assets/` 副本。含勤務資料的本機 Word 範本由 Git 忽略，部署環境需另外備妥私有物件。
