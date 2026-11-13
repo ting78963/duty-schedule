@@ -62,13 +62,16 @@ jobs:
 
           # Build a disposable valid DOCX with the expected 35-column weekday layout.
           doc=Document()
-          table=doc.add_table(rows=7, cols=35)
+          table=doc.add_table(rows=10, cols=35)
           table.cell(0,0).text='一線巡邏'
+          table.cell(0,1).text='中華民國115年10月1日【星期四】'
+          # Every leave heading needs a following writable row. Keep the
+          # required directory codes independent of the leave sections.
+          table.cell(3,34).text='輪   休'
           table.cell(4,30).text='19'
-          table.cell(4,34).text='休(補)假'
           table.cell(5,30).text='29'
-          table.cell(5,34).text='公假'
-          table.cell(6,34).text='輪   休'
+          table.cell(6,34).text='休(補)假'
+          table.cell(8,34).text='公假'
           buf=io.BytesIO()
           doc.save(buf)
           original=buf.getvalue()
@@ -103,7 +106,7 @@ jobs:
                       local=Path(tmp)/user_name
                       local.write_bytes(payload)
                       with patch.object(app,'get_tmpl',return_value=str(local)):
-                          output=app.generate_word({'onDuty':[],'offDuty':[],'rocDate':'115年11月1日','weekday':'日','isHoliday':False,'hasSake':False})
+                          output=app.generate_word({'onDuty':[],'offDuty':[],'rocDate':'115年11月2日','weekday':'一','isHoliday':False,'hasSake':False})
                       generated=Document(output)
                       all_text='\\n'.join(cell.text for t in generated.tables for row in t.rows for cell in row.cells)
                       assert '測試巡邏文字' in all_text, 'Generated Word lost the edited patrol wording'
