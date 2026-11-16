@@ -792,13 +792,25 @@ def generate_word(data):
     for label, people, rows in [('輪休', lx, lx_rows), ('休(補)假', bx, bx_rows), ('公假', gg, gg_rows)]:
         if not rows:
             raise ValueError(f'{roc_date} Word範本找不到「{label}」欄位')
-        if len(people) > len(rows):
-            raise ValueError(f'{roc_date}「{label}」共{len(people)}人，但範本只有{len(rows)}格，禁止漏列')
-        for j, person in enumerate(people):
-            set_cell_preserving_format(row_cells[rows[j]][OCODE_COL], str(person['ban']) if isinstance(person.get('ban'), int) else '')
-            set_cell_preserving_format(row_cells[rows[j]][ONAME_COL], person['name'])
-            apply_directory_text_format(row_cells[rows[j]][OCODE_COL], 12)
-            apply_directory_text_format(row_cells[rows[j]][ONAME_COL], 12)
+        # A continuation row shares its physical cell with the merge anchor.
+        # Reserve each code and name cell for at most one person.
+        slots = []
+        used_cells = set()
+        for row_index in rows:
+            code_cell = row_cells[row_index][OCODE_COL]._tc
+            name_cell = row_cells[row_index][ONAME_COL]._tc
+            if code_cell is name_cell or code_cell in used_cells or name_cell in used_cells:
+                continue
+            slots.append(row_index)
+            used_cells.update((code_cell, name_cell))
+        if len(people) > len(slots):
+            raise ValueError(f'{roc_date}「{label}」共{len(people)}人，但範本只有{len(slots)}格，禁止漏列')
+        for person, row_index in zip(people, slots):
+            row = row_cells[row_index]
+            set_cell_preserving_format(row[OCODE_COL], str(person['ban']))
+            set_cell_preserving_format(row[ONAME_COL], person['name'])
+            apply_directory_text_format(row[OCODE_COL], 12)
+            apply_directory_text_format(row[ONAME_COL], 12)
 
     date_match = re.fullmatch(r'(\d+)年(\d+)月(\d+)日', roc_date)
     if not date_match:
