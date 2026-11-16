@@ -175,13 +175,21 @@ def validate_generated_word(payload, data, template, persistent_notes, section_r
         indices = section_rows(base, c+4, label, old)
         require(bool(indices), '假別分類標題缺漏')
         actual = []
+        previous_index = None
+        previous_code_cell = None
         for i in indices:
-            pair = (rows[i][c+3].text.strip(), rows[i][c+4].text.strip())
-            if any(pair):
+            code_cell, name_cell = rows[i][c+3:c+5]
+            pair = (code_cell.text.strip(), name_cell.text.strip())
+            continuation = (previous_index == i - 1
+                            and code_cell._tc is previous_code_cell
+                            and code_cell._tc.vMerge == 'restart'
+                            and not pair[1])
+            if any(pair) and not continuation:
                 actual.append(pair)
-                font(rows[i][c+3], 12)
-                font(rows[i][c+4], 12)
-            mutable.update((rows[i][c+3]._tc, rows[i][c+4]._tc))
+                font(code_cell, 12)
+                font(name_cell, 12)
+            mutable.update((code_cell._tc, name_cell._tc))
+            previous_index, previous_code_cell = i, code_cell._tc
         require(actual == expected, '假別名單、分類或輪休排序不符')
 
     def hand(text):
