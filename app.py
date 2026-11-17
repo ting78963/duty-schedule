@@ -259,7 +259,7 @@ def clear_daily_hand_entry_codes(row_cells, code_col):
 # Persistent annotation confirmed in all four approved templates and the
 # accepted 11/6–11/8 documents; the Excel BB daily cells do not encode it.
 # Match both name and code so a replacement employee cannot inherit it.
-PERSISTENT_STAFF_REMARKS = {(23, '林筠臻'): '留職停薪'}
+PERSISTENT_STAFF_REMARKS = {}
 
 
 def set_red_border_cells(cells):
