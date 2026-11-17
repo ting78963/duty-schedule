@@ -1123,7 +1123,8 @@ def generate_checked_word(data):
             data['isHoliday'], data['hasSake'], data['sakeTimes'], data['rocDate']):
         raise ValueError('Word 驗證失敗：缺少當次模板來源')
     validate_generated_word(buf.getvalue(), data, snapshot[1],
-                            PERSISTENT_STAFF_REMARKS, find_section_rows)
+                            PERSISTENT_STAFF_REMARKS, find_section_rows,
+                            template_cache=g.get('batch_validation_templates'))
     buf.seek(0)
     return buf
 
@@ -1148,6 +1149,7 @@ def generate_batch():
     # Use one source-month snapshot and one copy of each template per batch.
     g.batch_source_month = (None, None)
     g.batch_template_bytes = {}
+    g.batch_validation_templates = {}
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w') as zf:
         for d in days_data:
