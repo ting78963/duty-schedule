@@ -153,8 +153,9 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#f8f9fc; }
 
         <div id="multi-bar" class="multi-bar">
           <span id="multi-count">已選 0 天</span>
+          <span>每批最多 10 天，整月請分三批下載</span>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-gold btn-sm" onclick="generateBatch()">⬇️ 批次產生 ZIP</button>
+            <button id="generate-batch" class="btn btn-gold btn-sm" onclick="generateBatch()">⬇️ 批次產生 ZIP</button>
             <button class="btn btn-sm" style="color:white;border:1px solid rgba(255,255,255,0.3);background:transparent" onclick="clearSel()">清除</button>
           </div>
         </div>
@@ -537,7 +538,8 @@ function buildDayData(dateStr, isHoliday) {
 async function downloadGeneratedFile(response, contentType, filename) {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.error || `伺服器錯誤 HTTP ${response.status}`);
+    const reason = error.detail || error.error || `伺服器錯誤 HTTP ${response.status}`;
+    throw new Error(error.date ? `${error.date}：${reason}` : reason);
   }
   const actualType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   if (actualType !== contentType) throw new Error('伺服器未回傳正確的檔案格式');
@@ -566,16 +568,26 @@ async function generateOne(dateStr, isHoliday, hasSake, btn) {
 }
 
 async function generateBatch() {
+  const button = document.getElementById('generate-batch');
+  if (button.disabled) return;
   if (!multiSel.size) { alert('請先選擇日期'); return; }
+  if (multiSel.size > 10) { alert('每批最多 10 天，請分批選取日期後下載 ZIP'); return; }
+  const label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = '產生中…';
   try {
     const daysData = [...multiSel].sort((a,b) => a-b).map(d => {
       const dateStr = `${currentYear}年${currentMonth}月${d}日`;
-      return buildDayData(dateStr);
+      try { return buildDayData(dateStr); }
+      catch (error) { throw new Error(`${dateStr}：${error.message}`); }
     });
     const res = await fetch('/api/generate-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(daysData)});
     await downloadGeneratedFile(res, 'application/zip', '勤務表批次.zip');
   } catch (error) {
     alert('批次產生失敗：'+error.message);
+  } finally {
+    button.innerHTML = label;
+    button.disabled = false;
   }
 }
 

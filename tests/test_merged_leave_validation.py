@@ -35,9 +35,19 @@ class MergedLeaveValidation(unittest.TestCase):
         doc.save(buf)
         return buf.getvalue()
 
-    def validate(self, payload):
+    def validate(self, payload, **kwargs):
         validate_generated_word(payload, self.data, self.template,
-                                app.PERSISTENT_STAFF_REMARKS, app.find_section_rows)
+                                app.PERSISTENT_STAFF_REMARKS, app.find_section_rows, **kwargs)
+
+    def test_cached_template_still_checks_each_output(self):
+        cache = {}
+        self.validate(self.output, template_cache=cache)
+        doc = Document(io.BytesIO(self.output))
+        table = doc.tables[0]
+        table.cell(4, 1).text = 'altered fixed text'
+        with self.assertRaisesRegex(ValueError, '模板固定文字或格式改變'):
+            self.validate(self.save(doc), template_cache=cache)
+        self.validate(self.output, template_cache=cache)
 
     def test_empty_continuation_is_not_a_second_leave_entry(self):
         self.validate(self.output)

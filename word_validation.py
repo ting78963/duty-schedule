@@ -20,8 +20,9 @@ def table_row_cells(table):
         current = {}
         row = []
         for tc in tr.tc_lst:
-            span = tc.grid_span
-            if tc.vMerge == 'continue':
+            props = tc.tcPr
+            span = props.grid_span if props is not None else 1
+            if props is not None and props.vMerge_val == 'continue':
                 if offset not in previous:
                     raise ValueError('Word 表格的合併儲存格缺少上一列')
                 cells = previous[offset]
@@ -94,21 +95,56 @@ def sake_frame_times(table, rows, duty_columns):
     return sorted(times)
 
 
-def validate_generated_word(payload, data, template, persistent_notes, section_rows):
+class ValidationTemplate:
+    """Read-only reference reused only within one batch request."""
+
+    def __init__(self, template):
+        self.document = Document(io.BytesIO(template))
+        self.tables = self.document.tables
+        self.rows = table_row_cells(self.tables[0]) if self.tables else []
+        self.serialized = {}
+        # Cell properties share many identical byte sequences, including the
+        # namespace declarations. Keep only one copy of each exact value.
+        self.xml_values = {}
+        self.texts = {}
+
+    def xml(self, element):
+        if element not in self.serialized:
+            value = etree.tostring(element) if element is not None else None
+            self.serialized[element] = self.xml_values.setdefault(value, value)
+        return self.serialized[element]
+
+    def text(self, cell):
+        if cell._tc not in self.texts:
+            self.texts[cell._tc] = cell.text.strip()
+        return self.texts[cell._tc]
+
+
+def validate_generated_word(payload, data, template, persistent_notes, section_rows,
+                            *, template_cache=None):
     def require(ok, reason):
         if not ok:
             raise ValueError('Word 驗證失敗：' + reason)
 
     try:
-        doc, source = Document(io.BytesIO(payload)), Document(io.BytesIO(template))
+        doc = Document(io.BytesIO(payload))
+        reference = template_cache.get(template) if template_cache is not None else None
+        if reference is None:
+            reference = ValidationTemplate(template)
+            if template_cache is not None:
+                # Keep only the latest reference; each parsed DOCX owns a large XML tree.
+                template_cache.clear()
+                template_cache[template] = reference
     except Exception as exc:
         raise ValueError('Word 驗證失敗：無法開啟產出文件') from exc
-    require(len(doc.tables) == len(source.tables) > 0, '表格數量不符')
-    require(etree.tostring(doc._element.body.sectPr) == etree.tostring(source._element.body.sectPr), '頁面設定改變')
-    table, base = doc.tables[0], source.tables[0]
+    source = reference.document
+    tables = doc.tables
+    require(len(tables) == len(reference.tables) > 0, '表格數量不符')
+    require(etree.tostring(doc._element.body.sectPr) == reference.xml(source._element.body.sectPr), '頁面設定改變')
+    table, base = tables[0], reference.tables[0]
     require(len(table.rows) == len(base.rows) and len(table.columns) == len(base.columns), '表格列欄數改變')
-    require(etree.tostring(table._tbl.tblGrid) == etree.tostring(base._tbl.tblGrid), '欄寬改變')
-    rows, old = table_row_cells(table), table_row_cells(base)
+    require(etree.tostring(table._tbl.tblGrid) == reference.xml(base._tbl.tblGrid), '欄寬改變')
+    rows, old = table_row_cells(table), reference.rows
     c = len(table.columns) - 5
     require(c >= 1, '名冊欄位不存在')
     mutable = set()
@@ -198,36 +234,38 @@ def validate_generated_word(payload, data, template, persistent_notes, section_r
                     and all(1 <= int(n) <= 63 for n in numbers))
 
     for tr, original_tr in zip(table._tbl.tr_lst, base._tbl.tr_lst):
-        require((etree.tostring(tr.trPr) if tr.trPr is not None else None)
-                == (etree.tostring(original_tr.trPr) if original_tr.trPr is not None else None), '列高或列設定改變')
+        row_props = tr.trPr
+        require((etree.tostring(row_props) if row_props is not None else None)
+                == reference.xml(original_tr.trPr), '列高或列設定改變')
         require(tr.grid_before == original_tr.grid_before and tr.grid_after == original_tr.grid_after,
                 '實體儲存格位置改變')
         require(len(tr.tc_lst) == len(original_tr.tc_lst), '實體儲存格數量改變')
         for cell, original in zip(tr.tc_lst, original_tr.tc_lst):
-            require((etree.tostring(cell.tcPr) if cell.tcPr is not None else None)
-                    == (etree.tostring(original.tcPr) if original.tcPr is not None else None),
+            cell_props = cell.tcPr
+            require((etree.tostring(cell_props) if cell_props is not None else None)
+                    == reference.xml(original.tcPr),
                     '實體儲存格邊線、合併、欄寬或文字方向改變')
 
     checked_fixed = set()
     for i, row in enumerate(rows):
-        time_row = bool(re.fullmatch(r'\d{1,2}[－\-–]\d{1,2}', old[i][0].text.strip()))
+        time_row = bool(re.fullmatch(r'\d{1,2}[－\-–]\d{1,2}', reference.text(old[i][0])))
         for j, cell in enumerate(row):
             original = old[i][j]
             if time_row and 0 < j < c:
                 text = cell.text.strip()
                 require(not hand(text), '勤務手填代號未留白')
-                if hand(original.text.strip()):
+                if hand(reference.text(original)):
                     require(not text, '手填欄出現非來源內容')
                     mutable.add(cell._tc)
             pair = (cell._tc, original._tc)
             if cell._tc not in mutable and pair not in checked_fixed:
                 # Paragraph XML includes the fixed text as well as its formatting.
                 require([etree.tostring(p._p) for p in cell.paragraphs]
-                        == [etree.tostring(p._p) for p in original.paragraphs], '模板固定文字或格式改變')
+                        == [reference.xml(p._p) for p in original.paragraphs], '模板固定文字或格式改變')
                 checked_fixed.add(pair)
     # The check above covers the main duty table. Other tables and non-table
     # body content must remain byte-for-byte identical to the actual template.
-    for out, original in zip(doc.tables[1:], source.tables[1:]):
-        require(etree.tostring(out._tbl) == etree.tostring(original._tbl), '其他表格被修改')
+    for out, original in zip(tables[1:], reference.tables[1:]):
+        require(etree.tostring(out._tbl) == reference.xml(original._tbl), '其他表格被修改')
     require([etree.tostring(p._p) for p in doc.paragraphs]
-            == [etree.tostring(p._p) for p in source.paragraphs], '表格外文字被修改')
+            == [reference.xml(p._p) for p in source.paragraphs], '表格外文字被修改')
