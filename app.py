@@ -6,6 +6,7 @@ import openpyxl, json, io, os, re, copy, zipfile, requests as req, hmac, uuid, g
 from datetime import datetime
 
 app = Flask(__name__)
+BATCH_DAY_LIMIT = 10
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
@@ -1146,6 +1147,8 @@ def generate_batch():
     days_data = request.json
     if not isinstance(days_data, list) or not days_data or any(not isinstance(d, dict) for d in days_data):
         return jsonify({'error': '請提供有效的勤務日期清單'}), 400
+    if len(days_data) > BATCH_DAY_LIMIT:
+        return jsonify({'error': f'每批最多 {BATCH_DAY_LIMIT} 天，請分批選取日期後下載 ZIP'}), 400
     # Use one source-month snapshot and one copy of each template per batch.
     g.batch_source_month = (None, None)
     g.batch_template_bytes = {}
