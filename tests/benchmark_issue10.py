@@ -1,4 +1,4 @@
-"""Time the offline 30-day ZIP route with explicitly supplied release files."""
+"""Time one offline ZIP batch with explicitly supplied release files."""
 import argparse
 from collections import Counter
 from contextlib import ExitStack
@@ -51,6 +51,7 @@ def main():
     parser.add_argument('excel', type=Path)
     parser.add_argument('templates', type=Path, help='Directory of the five Storage-named templates')
     parser.add_argument('--storage-delay', type=float, default=0, help='Seconds per simulated read')
+    parser.add_argument('--days', type=int, default=10, choices=range(1, 11))
     args = parser.parse_args()
     objects = {name: (args.templates / name).read_bytes()
                for name in app.TEMPLATE_STORAGE_NAMES.values()}
@@ -58,7 +59,7 @@ def main():
     objects['source_excel/2026-11.xlsx'] = excel
     parsed = app.parse_excel(excel)['monthlyData']
     days = [next(day for day in parsed.values() if day['roc_date'] == f'115年11月{n}日')
-            for n in range(1, 31)]
+            for n in range(1, args.days + 1)]
     payload = [{key: day[field] for key, field in KEYS.items()} for day in days]
     elapsed = Counter()
     counts = Counter()
@@ -109,7 +110,7 @@ def main():
     digest = hashlib.sha256()
     with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
         names = archive.namelist()
-        assert len(names) == len(set(names)) == 30 and archive.testzip() is None
+        assert len(names) == len(set(names)) == args.days and archive.testzip() is None
         for name, data in zip(names, payload):
             assert name == f"勤務表_{data['rocDate']}.docx"
             content = archive.read(name)

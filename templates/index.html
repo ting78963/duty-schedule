@@ -153,6 +153,7 @@ tr:last-child td { border-bottom:none; } tr:hover td { background:#f8f9fc; }
 
         <div id="multi-bar" class="multi-bar">
           <span id="multi-count">已選 0 天</span>
+          <span>每批最多 10 天，整月請分三批下載</span>
           <div style="display:flex;gap:8px">
             <button id="generate-batch" class="btn btn-gold btn-sm" onclick="generateBatch()">⬇️ 批次產生 ZIP</button>
             <button class="btn btn-sm" style="color:white;border:1px solid rgba(255,255,255,0.3);background:transparent" onclick="clearSel()">清除</button>
@@ -570,6 +571,7 @@ async function generateBatch() {
   const button = document.getElementById('generate-batch');
   if (button.disabled) return;
   if (!multiSel.size) { alert('請先選擇日期'); return; }
+  if (multiSel.size > 10) { alert('每批最多 10 天，請分批選取日期後下載 ZIP'); return; }
   const label = button.innerHTML;
   button.disabled = true;
   button.textContent = '產生中…';

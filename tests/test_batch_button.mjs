@@ -48,4 +48,10 @@ test('batch button prevents a second request and resets on error and success', a
   assert.equal(downloads, 1);
   assert.equal(button.disabled, false);
   assert.equal(button.innerHTML, '批次產生 ZIP');
+
+  vm.runInContext('multiSel = new Set(Array.from({length: 11}, (_, i) => i + 1))', context);
+  await context.generateBatch();
+  assert.equal(calls, 2);
+  assert.equal(button.disabled, false);
+  assert.match(alerts.at(-1), /每批最多 10 天/);
 });
